@@ -1,20 +1,29 @@
-import { fetchSheetData, Guest } from '@/lib/google-sheets';
+import { fetchSheetData, Guest, Room, VehicleTrip } from '@/lib/google-sheets';
 import { GuestList } from './GuestList';
 
-export const revalidate = 0; // Disable cache for real-time sheets data
+export const revalidate = 0;
 
 export default async function GuestsPage() {
   let guests: Guest[] = [];
+  let rooms: Room[] = [];
+  let vehicles: VehicleTrip[] = [];
+
   try {
-    guests = await fetchSheetData<Guest>('GUESTS');
+    const [guestsData, roomsData, vehiclesData] = await Promise.all([
+      fetchSheetData<Guest>('GUESTS'),
+      fetchSheetData<Room>('ROOMS'),
+      fetchSheetData<VehicleTrip>('VEHICLES_TRIPS')
+    ]);
+    guests = guestsData;
+    rooms = roomsData;
+    vehicles = vehiclesData;
   } catch (e) {
-    console.error(e);
+    console.error('Failed to fetch data for guests page:', e);
   }
 
   return (
-    <div className="p-4 pt-8">
-      <h1 className="text-3xl font-bold text-gray-900 mb-6">Guests</h1>
-      <GuestList initialGuests={guests} />
+    <div className="pt-2">
+      <GuestList initialGuests={guests} allRooms={rooms} allVehicles={vehicles} />
     </div>
   );
 }

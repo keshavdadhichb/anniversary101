@@ -1,13 +1,107 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #171717;
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: none;
   }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  input, textarea, select, button {
+    font-family: inherit;
+  }
+
+  /* Custom scrollbar for webkit browsers */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  
+  .animate-in {
+    animation: animateIn 0.2s ease-out both;
+  }
+  
+  .fade-in {
+    --enter-opacity: 0;
+    animation-name: fadeIn;
+  }
+  
+  .slide-in-from-bottom-full {
+    --enter-translate-y: 100%;
+    animation-name: slideInFromBottom;
+  }
+
+  .slide-in-from-bottom-5 {
+    --enter-translate-y: 1.25rem;
+    animation-name: slideInFromBottom;
+  }
+
+  .slide-in-from-bottom-10 {
+    --enter-translate-y: 2.5rem;
+    animation-name: slideInFromBottom;
+  }
+
+  .zoom-in-95 {
+    --enter-scale: 0.95;
+    animation-name: zoomIn;
+  }
+
+  .duration-200 {
+    animation-duration: 200ms;
+  }
+
+  .duration-300 {
+    animation-duration: 300ms;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInFromBottom {
+  from { transform: translateY(var(--enter-translate-y, 0)); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { transform: scale(var(--enter-scale, 0.95)); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }

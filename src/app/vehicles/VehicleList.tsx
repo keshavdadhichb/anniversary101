@@ -1,420 +1,337 @@
 'use client';
 
-import { useState, useOptimistic, useTransition } from 'react';
-import { VehicleTrip } from '@/lib/google-sheets';
-import { Search, MapPin, User, Users, Clock, Route, IndianRupee, Plus, X, Edit3, Navigation, Car } from 'lucide-react';
+import { useState, useOptimistic, useTransition, useMemo } from 'react';
+import { VehicleTrip, Guest } from '@/lib/google-sheets';
 import { useRouter } from 'next/navigation';
+import { Search, Car, Phone, User, MapPin, Clock, Navigation, IndianRupee, X, Plus, Trash2, ArrowRight } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { triggerSync } from '@/lib/sync-util';
 
-export function VehicleList({ initialVehicles }: { initialVehicles: VehicleTrip[] }) {
+interface VehicleListProps {
+  initialVehicles: VehicleTrip[];
+  allGuests: Guest[];
+}
+
+export function VehicleList({ initialVehicles, allGuests }: VehicleListProps) {
   const [search, setSearch] = useState('');
-  const [selectedVehicle, setSelectedVehicle] = useState<VehicleTrip | null>(null);
-  const [isAddMode, setIsAddMode] = useState(false);
-  const [assigneeName, setAssigneeName] = useState('');
+  const [selectedVehicleNum, setSelectedVehicleNum] = useState<string | null>(null);
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
+  const [guestSearch, setGuestSearch] = useState('');
   
-  const [newVehicleNum, setNewVehicleNum] = useState('');
-  const [newDriverName, setNewDriverName] = useState('');
-  const [newFromLocation, setNewFromLocation] = useState('');
-  const [newToLocation, setNewToLocation] = useState('');
-
-  const [optimisticVehicles, addOptimisticVehicle] = useOptimistic(
+  const [optimisticVehicles, addOptimisticTrip] = useOptimistic(
     initialVehicles,
-    (state: VehicleTrip[], action: { type: 'add' | 'update', vehicle: VehicleTrip }) => {
-      if (action.type === 'add') {
-        return [...state, action.vehicle];
-      }
-      return state.map(v => v.Trip_ID === action.vehicle.Trip_ID ? action.vehicle : v);
+    (state: VehicleTrip[], updatedTrip: VehicleTrip) => {
+      return state.map(t => t.Trip_ID === updatedTrip.Trip_ID ? updatedTrip : t);
     }
   );
 
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const filteredVehicles = optimisticVehicles.filter(v => 
-    v.Vehicle_Number?.toLowerCase().includes(search.toLowerCase()) || 
-    v.Driver_Name?.toLowerCase().includes(search.toLowerCase()) ||
-    v.From_Location?.toLowerCase().includes(search.toLowerCase()) ||
-    v.To_Location?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const handleAssign = async () => {
-    if (!selectedVehicle || !assigneeName.trim()) return;
-
-    const currentPassengers = selectedVehicle.Passengers 
-      ? selectedVehicle.Passengers.split(',').map(n => n.trim()).filter(Boolean) 
-      : [];
-    currentPassengers.push(assigneeName.trim());
+  // Grouping logic: Vehicles are grouped by Vehicle_Number
+  const vehicleGroups = useMemo(() => {
+    const groups: Record<string, { trips: VehicleTrip[], totalCost: number, driverName: string, driverPhone: string }> = {};
     
-    const newPassengersStr = currentPassengers.join(', ');
+    optimisticVehicles.forEach(trip => {
+      const num = trip.Vehicle_Number || 'Unknown';
+      if (!groups[num]) {
+        groups[num] = { trips: [], totalCost: 0, driverName: trip.Driver_Name || '', driverPhone: trip.Driver_Phone || '' };
+      }
+      groups[num].trips.push(trip);
+      const cost = parseInt(trip.Trip_Cost?.replace(/[^0-9]/g, '') || '0') || 0;
+      groups[num].totalCost += cost;
+    });
 
-    const updatedVehicle = { ...selectedVehicle, Passengers: newPassengersStr };
+    // Filter groups by search
+    return Object.entries(groups).filter(([num, data]) => 
+      num.toLowerCase().includes(search.toLowerCase()) || 
+      data.driverName.toLowerCase().includes(search.toLowerCase())
+    );
+  }, [optimisticVehicles, search]);
+
+  const handleUpdateTrip = async (trip: VehicleTrip, updates: Partial<VehicleTrip>) => {
+    const updatedTrip = { ...trip, ...updates };
 
     startTransition(() => {
-      addOptimisticVehicle({ type: 'update', vehicle: updatedVehicle });
-      setSelectedVehicle(updatedVehicle);
-      setAssigneeName('');
+      addOptimisticTrip(updatedTrip);
     });
 
     try {
+      triggerSync();
       const res = await fetch('/api/vehicles', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          id: selectedVehicle.Trip_ID, 
-          updates: { Passengers: newPassengersStr } 
+          id: trip.Trip_ID, 
+          updates 
         })
       });
       if (!res.ok) throw new Error('Update failed');
+      toast.success('Trip updated');
       router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to add passenger.');
-      router.refresh();
-    }
-  };
-
-  const handleUpdateField = async (tripId: string, updates: Partial<VehicleTrip>) => {
-    const original = optimisticVehicles.find(v => v.Trip_ID === tripId);
-    if (!original) return;
-    
-    const updatedVehicle = { ...original, ...updates };
-
-    startTransition(() => {
-      addOptimisticVehicle({ type: 'update', vehicle: updatedVehicle });
-      if (selectedVehicle?.Trip_ID === tripId) {
-        setSelectedVehicle(updatedVehicle);
-      }
-    });
-
-    try {
-      const res = await fetch('/api/vehicles', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: tripId, updates })
-      });
-      if (!res.ok) throw new Error('Update failed');
-      router.refresh();
-    } catch (error) {
-      console.error(error);
+    } catch (e) {
+      toast.error('Failed to update trip');
       router.refresh();
     }
   };
 
-  const handleAdd = async () => {
-    if (!newVehicleNum.trim()) return;
-
-    const tempId = `TRIP_${Date.now()}`;
-    const newTrip: VehicleTrip = {
-      Trip_ID: tempId,
-      Vehicle_Number: newVehicleNum.trim(),
-      Driver_Name: newDriverName.trim(),
-      Driver_Phone: '',
-      From_Location: newFromLocation.trim(),
-      To_Location: newToLocation.trim(),
-      Passengers: '',
-      Depart_Time: '',
-      Distance_KM: '',
-      Trip_Cost: ''
-    };
-
-    startTransition(() => {
-      addOptimisticVehicle({ type: 'add', vehicle: newTrip });
-      setIsAddMode(false);
-      setNewVehicleNum('');
-      setNewDriverName('');
-      setNewFromLocation('');
-      setNewToLocation('');
-    });
-
-    try {
-      const res = await fetch('/api/vehicles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newTrip)
-      });
-      if (!res.ok) throw new Error('Add failed');
-      router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to add trip to database.');
-      router.refresh();
-    }
+  const addPassengerToTrip = (trip: VehicleTrip, guestName: string) => {
+    const current = trip.Passengers ? trip.Passengers.split(',').map(n => n.trim()).filter(Boolean) : [];
+    const updated = [...current, guestName].join(', ');
+    handleUpdateTrip(trip, { Passengers: updated });
+    setGuestSearch('');
   };
+
+  const removePassengerFromTrip = (trip: VehicleTrip, index: number) => {
+    const current = trip.Passengers ? trip.Passengers.split(',').map(n => n.trim()).filter(Boolean) : [];
+    current.splice(index, 1);
+    handleUpdateTrip(trip, { Passengers: current.join(', ') });
+  };
+
+  const selectedVehicleData = useMemo(() => {
+    if (!selectedVehicleNum) return null;
+    return optimisticVehicles.filter(t => t.Vehicle_Number === selectedVehicleNum);
+  }, [selectedVehicleNum, optimisticVehicles]);
+
+  const guestResults = useMemo(() => {
+    return allGuests.filter(g => 
+      g.Name?.toLowerCase().includes(guestSearch.toLowerCase())
+    ).slice(0, 5);
+  }, [allGuests, guestSearch]);
 
   return (
-    <div className="relative pb-24">
-      <div className="flex justify-between items-center mb-6 px-1">
-        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent">
-          Trips
-        </h1>
-        <button 
-          onClick={() => setIsAddMode(true)}
-          className="flex items-center space-x-1 bg-gradient-to-r from-orange-500 to-rose-500 text-white px-4 py-2 rounded-full shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transition-all active:scale-95"
-        >
-          <Plus size={18} />
-          <span className="font-medium text-sm">Add Trip</span>
-        </button>
-      </div>
-
-      <div className="relative mb-6">
-        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-          <Search className="h-5 w-5 text-gray-400" />
+    <div className="space-y-4">
+      {/* Sticky Search */}
+      <div className="sticky top-0 z-20 bg-[#F9FAFB]/80 backdrop-blur-md py-3 -mx-4 px-4">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+          <input 
+            type="text"
+            placeholder="Search vehicle or driver..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full bg-white border-none rounded-2xl py-4 pl-12 pr-4 shadow-sm ring-1 ring-gray-100 focus:ring-2 focus:ring-blue-500 transition-all text-base"
+          />
         </div>
-        <input
-          type="text"
-          placeholder="Search by vehicle, driver or route..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="block w-full pl-11 pr-4 py-3.5 border-none rounded-2xl bg-white/70 backdrop-blur-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 sm:text-base shadow-sm ring-1 ring-gray-100 transition-all"
-        />
       </div>
 
       <div className="space-y-4">
-        {filteredVehicles.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white/50 backdrop-blur-sm rounded-3xl border border-dashed border-gray-200">
-            <div className="w-16 h-16 bg-orange-50 rounded-full flex items-center justify-center mb-4">
-              <Car className="text-orange-500" size={28} />
+        {vehicleGroups.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+              <Car className="text-gray-300" size={40} />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">No trips found</h3>
-            <p className="text-gray-500 text-sm max-w-[250px]">
-              {search ? "We couldn't find any trips matching your search." : "Your trip list is empty. Add a new trip to get started."}
-            </p>
-            {!search && (
-              <button 
-                onClick={() => setIsAddMode(true)}
-                className="mt-6 px-6 py-2.5 bg-white text-orange-600 border border-orange-200 rounded-full font-medium shadow-sm active:scale-95 transition-transform"
-              >
-                Add First Trip
-              </button>
-            )}
+            <p className="text-gray-500 font-medium">No vehicles found matching &quot;{search}&quot;</p>
           </div>
         ) : (
-          filteredVehicles.map(vehicle => (
+          vehicleGroups.map(([num, data]) => (
             <div 
-              key={vehicle.Trip_ID}
-              onClick={() => setSelectedVehicle(vehicle)}
-              className="group bg-white/90 backdrop-blur-sm p-5 rounded-3xl shadow-sm border border-gray-100/80 cursor-pointer hover:shadow-md hover:border-orange-100 transition-all active:scale-[0.98] relative overflow-hidden"
+              key={num}
+              onClick={() => setSelectedVehicleNum(num)}
+              className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 active:scale-[0.98] transition-all cursor-pointer"
             >
-              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-orange-400 to-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              
               <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className="text-lg font-extrabold text-gray-900 tracking-tight">{vehicle.Vehicle_Number || 'Unknown Vehicle'}</h3>
-                  <div className="flex items-center text-sm text-gray-500 mt-1 font-medium">
-                    <User size={14} className="mr-1.5 text-orange-400" />
-                    {vehicle.Driver_Name || 'No Driver'}
+                <div className="flex items-center space-x-3">
+                  <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center text-white">
+                    <Car size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-gray-900 leading-tight">{num}</h3>
+                    <div className="flex items-center text-sm font-bold text-gray-400">
+                      <User size={14} className="mr-1" /> {data.driverName || 'No Driver'}
+                    </div>
                   </div>
                 </div>
-                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center group-hover:bg-orange-50 transition-colors">
-                  <Edit3 size={18} className="text-gray-400 group-hover:text-orange-500" />
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 mb-4 bg-gray-50/80 p-3 rounded-2xl">
-                <div className="flex flex-col items-center">
-                  <div className="w-2 h-2 rounded-full bg-orange-400"></div>
-                  <div className="w-0.5 h-6 bg-gray-300"></div>
-                  <div className="w-2 h-2 rounded-full border-2 border-rose-500"></div>
-                </div>
-                <div className="flex flex-col justify-between h-10 flex-1">
-                  <p className="text-xs font-semibold text-gray-700 truncate">{vehicle.From_Location || 'TBD'}</p>
-                  <p className="text-xs font-semibold text-gray-700 truncate">{vehicle.To_Location || 'TBD'}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-xs font-semibold border-t border-gray-100 pt-3">
-                <div className="flex items-center text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
-                  <Users size={14} className="mr-1.5" />
-                  {vehicle.Passengers ? vehicle.Passengers.split(',').length : 0} pax
-                </div>
-                {vehicle.Trip_Cost && (
-                  <div className="flex items-center text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">
-                    <IndianRupee size={14} className="mr-1" />
-                    {vehicle.Trip_Cost}
-                  </div>
+                {data.driverPhone && (
+                  <a 
+                    href={`tel:${data.driverPhone}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-3 bg-blue-50 text-blue-600 rounded-2xl active:scale-90 transition-all"
+                  >
+                    <Phone size={20} />
+                  </a>
                 )}
-                {vehicle.Depart_Time && (
-                  <div className="flex items-center text-purple-600 bg-purple-50 px-2 py-1 rounded-md">
-                    <Clock size={14} className="mr-1.5" />
-                    {vehicle.Depart_Time}
-                  </div>
-                )}
+              </div>
+              
+              <div className="flex justify-between items-end border-t border-gray-50 pt-4">
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Total Trips</p>
+                  <p className="text-lg font-black text-gray-700">{data.trips.length}</p>
+                </div>
+                <div className="text-right space-y-1">
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Total Cost</p>
+                  <p className="text-lg font-black text-emerald-600">₹{data.totalCost.toLocaleString()}</p>
+                </div>
               </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Add Trip Modal */}
-      {isAddMode && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300 border border-white/20">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white">
-              <h2 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent">Add New Trip</h2>
-              <button 
-                onClick={() => { setIsAddMode(false); setNewVehicleNum(''); setNewDriverName(''); setNewFromLocation(''); setNewToLocation(''); }}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50"
-              >
-                <X size={20} className="text-gray-500" />
+      {/* Vehicle Detail / Trip View */}
+      {selectedVehicleNum && selectedVehicleData && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedVehicleNum(null)} />
+          <div className="relative bg-[#F9FAFB] w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full duration-300 flex flex-col h-full max-h-[90vh]">
+            {/* Header */}
+            <div className="bg-white px-6 py-6 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
+              <div className="flex items-center space-x-4">
+                <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-white">
+                  <Car size={20} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-gray-900">{selectedVehicleNum}</h2>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                    Driver: {selectedVehicleData[0]?.Driver_Name || 'N/A'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedVehicleNum(null)} className="p-2 rounded-full bg-gray-50 text-gray-400">
+                <X size={20} />
               </button>
             </div>
-            
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Vehicle Number <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  type="text"
-                  value={newVehicleNum}
-                  onChange={(e) => setNewVehicleNum(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-gray-900"
-                  placeholder="e.g. RJ14 XX 1234"
-                  autoFocus
-                />
-              </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Driver Name
-                </label>
-                <input 
-                  type="text"
-                  value={newDriverName}
-                  onChange={(e) => setNewDriverName(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-gray-900"
-                  placeholder="e.g. Ramesh"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                    From
-                  </label>
-                  <input 
-                    type="text"
-                    value={newFromLocation}
-                    onChange={(e) => setNewFromLocation(e.target.value)}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-gray-900"
-                    placeholder="e.g. Airport"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                    To
-                  </label>
-                  <input 
-                    type="text"
-                    value={newToLocation}
-                    onChange={(e) => setNewToLocation(e.target.value)}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-gray-900"
-                    placeholder="e.g. Hotel"
-                  />
-                </div>
-              </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+              <h4 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em] px-2 pt-2">Trip Timeline</h4>
               
-              <div className="pt-2">
-                 <button 
-                   onClick={handleAdd}
-                   disabled={!newVehicleNum.trim() || isPending}
-                   className="w-full py-4 bg-gradient-to-r from-orange-500 to-rose-500 text-white rounded-xl font-bold shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
-                 >
-                   Save Trip
-                 </button>
+              <div className="space-y-4 relative before:absolute before:left-8 before:top-4 before:bottom-4 before:w-0.5 before:bg-gray-200">
+                {selectedVehicleData.map((trip, idx) => (
+                  <div key={trip.Trip_ID} className="relative pl-12">
+                    {/* Timeline Dot */}
+                    <div className="absolute left-[30px] top-6 w-3 h-3 rounded-full bg-blue-600 ring-4 ring-white shadow-sm z-10" />
+                    
+                    <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center text-sm font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+                          <Clock size={14} className="mr-2" /> {trip.Depart_Time || '--:--'}
+                        </div>
+                        <span className="text-[10px] font-black text-gray-300">TRIP #{idx + 1}</span>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <div className="flex-1">
+                          <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-1">From</p>
+                          <p className="font-bold text-gray-800 text-sm truncate">{trip.From_Location || '---'}</p>
+                        </div>
+                        <ArrowRight size={16} className="text-gray-300 mt-4" />
+                        <div className="flex-1">
+                          <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-1 text-right">To</p>
+                          <p className="font-bold text-gray-800 text-sm text-right truncate">{trip.To_Location || '---'}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 border-t border-gray-50 pt-4">
+                        <div>
+                          <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block mb-1">Distance (KM)</label>
+                          <div className="relative">
+                            <Navigation size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input 
+                              type="text"
+                              defaultValue={trip.Distance_KM}
+                              onBlur={(e) => handleUpdateTrip(trip, { Distance_KM: e.target.value })}
+                              className="w-full bg-gray-50 border-none rounded-xl py-2 pl-8 pr-3 text-sm font-bold text-gray-700"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block mb-1">Cost (₹)</label>
+                          <div className="relative">
+                            <IndianRupee size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input 
+                              type="text"
+                              defaultValue={trip.Trip_Cost}
+                              onBlur={(e) => handleUpdateTrip(trip, { Trip_Cost: e.target.value })}
+                              className="w-full bg-gray-50 border-none rounded-xl py-2 pl-8 pr-3 text-sm font-bold text-emerald-600"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Passenger Manifest */}
+                      <div className="pt-2">
+                        <div className="flex justify-between items-center mb-2">
+                          <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Passenger Manifest</h5>
+                          <button 
+                            onClick={() => setActiveTripId(trip.Trip_ID)}
+                            className="text-blue-600 p-1 rounded-full bg-blue-50 active:scale-90 transition-all"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {trip.Passengers ? trip.Passengers.split(',').map((name, pIdx) => (
+                            <div key={pIdx} className="bg-gray-100 text-[10px] font-bold text-gray-600 px-2.5 py-1 rounded-full flex items-center">
+                              {name.trim()}
+                              <button onClick={() => removePassengerFromTrip(trip, pIdx)} className="ml-1.5 text-gray-300 hover:text-red-500">
+                                <X size={10} />
+                              </button>
+                            </div>
+                          )) : (
+                            <p className="text-[10px] text-gray-400 italic">No passengers assigned</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
+            </div>
+            
+            <div className="p-6 bg-white border-t border-gray-100">
+              <button 
+                onClick={() => setSelectedVehicleNum(null)}
+                className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black hover:bg-black transition-all active:scale-[0.98]"
+              >
+                Close Dashboard
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Edit Vehicle & Assignment Modal */}
-      {selectedVehicle && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white/95 backdrop-blur-md sticky top-0 z-10">
-              <h2 className="text-xl font-bold text-gray-900">{selectedVehicle.Vehicle_Number}</h2>
-              <button 
-                onClick={() => { setSelectedVehicle(null); setAssigneeName(''); }}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50"
-              >
-                <X size={20} className="text-gray-500" />
-              </button>
+      {/* Add Passenger Modal (Small Search) */}
+      {activeTripId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setActiveTripId(null); setGuestSearch(''); }} />
+          <div className="relative bg-white w-full max-w-xs rounded-3xl shadow-2xl p-6 space-y-4 animate-in zoom-in-95">
+            <h3 className="text-lg font-black text-gray-900">Add Passenger</h3>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input 
+                type="text"
+                autoFocus
+                placeholder="Search guest name..."
+                value={guestSearch}
+                onChange={(e) => setGuestSearch(e.target.value)}
+                className="w-full bg-gray-50 border-none rounded-xl py-3 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-500"
+              />
             </div>
             
-            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
-              
-              {/* Trip Info Fields */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 flex items-center">
-                    <IndianRupee size={12} className="mr-1 text-emerald-500" /> Cost
-                  </label>
-                  <input 
-                    type="text"
-                    defaultValue={selectedVehicle.Trip_Cost}
-                    onBlur={(e) => handleUpdateField(selectedVehicle.Trip_ID, { Trip_Cost: e.target.value })}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-sm font-semibold text-gray-900"
-                    placeholder="e.g. 1500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 flex items-center">
-                    <Clock size={12} className="mr-1 text-purple-500" /> Time
-                  </label>
-                  <input 
-                    type="text"
-                    defaultValue={selectedVehicle.Depart_Time}
-                    onBlur={(e) => handleUpdateField(selectedVehicle.Trip_ID, { Depart_Time: e.target.value })}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition-all text-sm font-semibold text-gray-900"
-                    placeholder="e.g. 10:00 AM"
-                  />
-                </div>
-              </div>
-
-              {/* Passengers Section */}
-              <div className="bg-gray-50/80 border border-gray-100 p-5 rounded-2xl">
-                <p className="text-sm font-semibold text-gray-500 mb-3 flex items-center">
-                  <Users size={16} className="mr-2 text-blue-500" /> Passengers
-                </p>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {selectedVehicle.Passengers ? (
-                    selectedVehicle.Passengers.split(',').map((name, i) => (
-                      <span key={i} className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-800 shadow-sm flex items-center">
-                        {name.trim()}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-sm text-gray-400 italic">No passengers assigned yet</span>
-                  )}
-                </div>
-                
-                <div className="flex gap-2">
-                  <input 
-                    type="text"
-                    value={assigneeName}
-                    onChange={(e) => setAssigneeName(e.target.value)}
-                    className="flex-1 border-0 ring-1 ring-gray-200 rounded-xl p-3 bg-white focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium text-gray-900"
-                    placeholder="Add passenger name..."
-                  />
+            {guestSearch && guestResults.length > 0 && (
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {guestResults.map(guest => (
                   <button 
-                    onClick={handleAssign}
-                    disabled={!assigneeName.trim()}
-                    className="px-4 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    key={guest.Guest_ID}
+                    onClick={() => {
+                      const trip = optimisticVehicles.find(t => t.Trip_ID === activeTripId);
+                      if (trip) addPassengerToTrip(trip, guest.Name || '');
+                      setActiveTripId(null);
+                    }}
+                    className="w-full text-left p-3 hover:bg-gray-50 rounded-xl font-bold text-gray-700 text-sm flex justify-between items-center group"
                   >
-                    Add
+                    {guest.Name}
+                    <Plus size={14} className="text-blue-500 opacity-0 group-hover:opacity-100" />
                   </button>
-                </div>
+                ))}
               </div>
-
-              <div className="pt-2 pb-2">
-                 <button 
-                   onClick={() => { setSelectedVehicle(null); setAssigneeName(''); }}
-                   className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold hover:bg-black shadow-lg shadow-gray-900/20 transition-all active:scale-[0.98]"
-                 >
-                   Done Editing
-                 </button>
-              </div>
-            </div>
+            )}
+            
+            <button 
+              onClick={() => { setActiveTripId(null); setGuestSearch(''); }}
+              className="w-full py-3 bg-gray-100 text-gray-500 rounded-xl font-bold text-sm"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

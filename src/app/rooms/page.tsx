@@ -1,20 +1,26 @@
-import { fetchSheetData, Room } from '@/lib/google-sheets';
+import { fetchSheetData, Room, Guest } from '@/lib/google-sheets';
 import { RoomGrid } from './RoomGrid';
 
 export const revalidate = 0;
 
 export default async function RoomsPage() {
   let rooms: Room[] = [];
+  let guests: Guest[] = [];
+
   try {
-    rooms = await fetchSheetData<Room>('ROOMS');
+    const [roomsData, guestsData] = await Promise.all([
+      fetchSheetData<Room>('ROOMS'),
+      fetchSheetData<Guest>('GUESTS')
+    ]);
+    rooms = roomsData;
+    guests = guestsData;
   } catch (e) {
-    console.error(e);
+    console.error('Failed to fetch data for rooms page:', e);
   }
 
   return (
-    <div className="p-4 pt-8 pb-24 min-h-screen bg-gray-50">
-      <h1 className="text-3xl font-bold text-gray-900 mb-6">Rooms</h1>
-      <RoomGrid initialRooms={rooms} />
+    <div className="pt-2">
+      <RoomGrid initialRooms={rooms} allGuests={guests} />
     </div>
   );
 }

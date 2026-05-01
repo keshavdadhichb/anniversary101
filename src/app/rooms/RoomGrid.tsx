@@ -1,305 +1,246 @@
 'use client';
 
-import { useState, useOptimistic, useTransition } from 'react';
-import { Room } from '@/lib/google-sheets';
+import { useState, useOptimistic, useTransition, useMemo } from 'react';
+import { Room, Guest } from '@/lib/google-sheets';
 import { useRouter } from 'next/navigation';
-import { Users, MapPin, X, Plus, Home } from 'lucide-react';
+import { Users, MapPin, X, Trash2, Search, Plus, Home } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { triggerSync } from '@/lib/sync-util';
 
-export function RoomGrid({ initialRooms }: { initialRooms: Room[] }) {
+interface RoomGridProps {
+  initialRooms: Room[];
+  allGuests: Guest[];
+}
+
+export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const [assigneeName, setAssigneeName] = useState('');
-  const [isAddMode, setIsAddMode] = useState(false);
-  const [newRoomId, setNewRoomId] = useState('');
-  const [newRoomLocation, setNewRoomLocation] = useState('');
-  const [newRoomCapacity, setNewRoomCapacity] = useState('');
+  const [guestSearch, setGuestSearch] = useState('');
   
   const [optimisticRooms, addOptimisticRoom] = useOptimistic(
     initialRooms,
-    (state: Room[], action: { type: 'add' | 'update', room: Room }) => {
-      if (action.type === 'add') {
-        return [...state, action.room];
-      }
-      return state.map(r => r.Room_ID === action.room.Room_ID ? action.room : r);
+    (state: Room[], updatedRoom: Room) => {
+      return state.map(r => r.Room_ID === updatedRoom.Room_ID ? updatedRoom : r);
     }
   );
 
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // Stats
+  const stats = useMemo(() => {
+    let occupied = 0;
+    let total = 0;
+    optimisticRooms.forEach(r => {
+      const occupants = r.Occupant_Names ? r.Occupant_Names.split(',').length : 0;
+      occupied += occupants;
+      total += parseInt(r.Capacity || '0') || 0;
+    });
+    return { occupied, total };
+  }, [optimisticRooms]);
+
   // Group rooms by Location
   const roomsByLocation = optimisticRooms.reduce((acc, room) => {
-    const loc = room.Location || 'Unassigned Location';
+    const loc = room.Location || 'Unassigned';
     if (!acc[loc]) acc[loc] = [];
     acc[loc].push(room);
     return acc;
   }, {} as Record<string, Room[]>);
 
-  const handleAssign = async () => {
-    if (!selectedRoom || !assigneeName.trim()) return;
-
-    const currentOccupants = selectedRoom.Occupant_Names 
-      ? selectedRoom.Occupant_Names.split(',').map(n => n.trim()).filter(Boolean) 
-      : [];
-    currentOccupants.push(assigneeName.trim());
-    
-    const newOccupantsStr = currentOccupants.join(', ');
-    const newStatus = newOccupantsStr.length > 0 ? 'Occupied' : 'Available';
-
-    const updatedRoom = { 
-      ...selectedRoom, 
-      Occupant_Names: newOccupantsStr,
-      Status: newStatus
-    };
+  const handleUpdateRoom = async (room: Room, newOccupants: string) => {
+    const newStatus = newOccupants.length > 0 ? 'Occupied' : 'Available';
+    const updatedRoom = { ...room, Occupant_Names: newOccupants, Status: newStatus };
 
     startTransition(() => {
-      addOptimisticRoom({ type: 'update', room: updatedRoom });
-      setSelectedRoom(null);
-      setAssigneeName('');
+      addOptimisticRoom(updatedRoom);
+      setSelectedRoom(updatedRoom);
     });
 
     try {
+      triggerSync();
       const res = await fetch('/api/rooms', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          id: selectedRoom.Room_ID, 
-          updates: { Occupant_Names: newOccupantsStr, Status: newStatus } 
+          id: room.Room_ID, 
+          updates: { Occupant_Names: newOccupants, Status: newStatus } 
         })
       });
       if (!res.ok) throw new Error('Update failed');
+      toast.success('Room updated');
       router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to assign guest to room.');
-      router.refresh();
-    }
-  };
-
-  const handleAdd = async () => {
-    if (!newRoomId.trim()) return;
-
-    const newRoom: Room = {
-      Room_ID: newRoomId.trim(),
-      Location: newRoomLocation.trim(),
-      Capacity: newRoomCapacity.trim(),
-      Occupant_Names: '',
-      Status: 'Available'
-    };
-
-    startTransition(() => {
-      addOptimisticRoom({ type: 'add', room: newRoom });
-      setIsAddMode(false);
-      setNewRoomId('');
-      setNewRoomLocation('');
-      setNewRoomCapacity('');
-    });
-
-    try {
-      const res = await fetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRoom)
-      });
-      if (!res.ok) throw new Error('Add failed');
-      router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to add room.');
+    } catch (e) {
+      toast.error('Failed to update room');
       router.refresh();
     }
   };
+
+  const addGuestToRoom = (guestName: string) => {
+    if (!selectedRoom) return;
+    const current = selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map(n => n.trim()).filter(Boolean) : [];
+    if (current.length >= (parseInt(selectedRoom.Capacity || '0') || 0)) {
+      toast.error('Room is at full capacity');
+      return;
+    }
+    const updated = [...current, guestName].join(', ');
+    handleUpdateRoom(selectedRoom, updated);
+    setGuestSearch('');
+  };
+
+  const removeGuestFromRoom = (index: number) => {
+    if (!selectedRoom) return;
+    const current = selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map(n => n.trim()).filter(Boolean) : [];
+    current.splice(index, 1);
+    handleUpdateRoom(selectedRoom, current.join(', '));
+  };
+
+  const unassignedGuests = useMemo(() => {
+    return allGuests.filter(g => 
+      !g.Room_ID && 
+      g.Name?.toLowerCase().includes(guestSearch.toLowerCase())
+    ).slice(0, 5);
+  }, [allGuests, guestSearch]);
 
   return (
-    <div className="relative pb-24">
-      <div className="flex justify-between items-center mb-6 px-1">
-        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
-          Rooms
-        </h1>
-        <button 
-          onClick={() => setIsAddMode(true)}
-          className="flex items-center space-x-1 bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-4 py-2 rounded-full shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all active:scale-95"
-        >
-          <Plus size={18} />
-          <span className="font-medium text-sm">Add Room</span>
-        </button>
+    <div className="space-y-8">
+      {/* Header Stats */}
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Overall Capacity</h3>
+          <p className="text-2xl font-black text-gray-900">{stats.occupied}<span className="text-gray-300 mx-1">/</span>{stats.total}</p>
+        </div>
+        <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center">
+          <Home className="text-blue-500" size={24} />
+        </div>
       </div>
 
-      <div className="space-y-8">
-        {Object.keys(roomsByLocation).length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white/50 backdrop-blur-sm rounded-3xl border border-dashed border-gray-200">
-            <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mb-4">
-              <Home className="text-emerald-500" size={28} />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">No rooms found</h3>
-            <p className="text-gray-500 text-sm max-w-[250px]">
-              Your room list is empty. Add a new room to get started.
-            </p>
-            <button 
-              onClick={() => setIsAddMode(true)}
-              className="mt-6 px-6 py-2.5 bg-white text-emerald-600 border border-emerald-200 rounded-full font-medium shadow-sm active:scale-95 transition-transform"
-            >
-              Add First Room
-            </button>
-          </div>
-        ) : (
-          Object.entries(roomsByLocation).map(([location, rooms]) => (
-            <div key={location} className="bg-white/80 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-100/80">
-              <div className="flex items-center space-x-2 mb-5">
-                <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                  <MapPin className="text-emerald-500" size={16} />
+      {Object.entries(roomsByLocation).map(([location, rooms]) => (
+        <div key={location} className="space-y-4">
+          <h2 className="text-sm font-black text-gray-500 uppercase tracking-[0.2em] px-2">{location}</h2>
+          
+          <div className="grid grid-cols-3 gap-3">
+            {rooms.map(room => {
+              const occupants = room.Occupant_Names ? room.Occupant_Names.split(',').filter(Boolean).length : 0;
+              const capacity = parseInt(room.Capacity || '0') || 0;
+              const isFull = occupants >= capacity;
+              
+              return (
+                <div
+                  key={room.Room_ID}
+                  onClick={() => setSelectedRoom(room)}
+                  className={`aspect-square rounded-2xl flex flex-col items-center justify-center relative cursor-pointer transition-all active:scale-95 shadow-sm border-2 ${
+                    isFull 
+                      ? 'bg-red-50 border-red-100 text-red-600' 
+                      : 'bg-green-50 border-green-100 text-green-600'
+                  }`}
+                >
+                  {/* Capacity Badge */}
+                  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-white/80 backdrop-blur-sm text-[10px] font-black border border-inherit">
+                    {occupants}/{capacity}
+                  </div>
+                  
+                  <span className="text-xl font-black">{room.Room_ID}</span>
                 </div>
-                <h2 className="text-xl font-bold text-gray-800">{location}</h2>
-              </div>
-              
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {rooms.map(room => {
-                  const isOccupied = room.Status?.toLowerCase() === 'occupied' || (room.Occupant_Names && room.Occupant_Names.length > 0);
-                  return (
-                    <div
-                      key={room.Room_ID}
-                      onClick={() => setSelectedRoom(room)}
-                      className={`relative p-4 rounded-2xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all active:scale-95 hover:shadow-md ${
-                        isOccupied 
-                          ? 'bg-red-50/50 border-red-200 text-red-700 hover:border-red-300' 
-                          : 'bg-emerald-50/50 border-emerald-200 text-emerald-700 hover:border-emerald-300'
-                      }`}
-                    >
-                      <span className="text-2xl font-black block mb-1 tracking-tight">{room.Room_ID}</span>
-                      <div className="flex items-center text-xs font-semibold opacity-80 bg-white/50 px-2 py-0.5 rounded-full">
-                        <Users size={12} className="mr-1" />
-                        <span>{room.Capacity || '?'} Beds</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Add Room Modal */}
-      {isAddMode && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300 border border-white/20">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white">
-              <h2 className="text-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">Add New Room</h2>
-              <button 
-                onClick={() => { setIsAddMode(false); setNewRoomId(''); setNewRoomLocation(''); setNewRoomCapacity(''); }}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50"
-              >
-                <X size={20} className="text-gray-500" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Room ID / Number <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  type="text"
-                  value={newRoomId}
-                  onChange={(e) => setNewRoomId(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all text-gray-900"
-                  placeholder="e.g. 101"
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Location (Building/Floor)
-                </label>
-                <input 
-                  type="text"
-                  value={newRoomLocation}
-                  onChange={(e) => setNewRoomLocation(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all text-gray-900"
-                  placeholder="e.g. Main Building - Floor 1"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Capacity (Beds)
-                </label>
-                <input 
-                  type="number"
-                  value={newRoomCapacity}
-                  onChange={(e) => setNewRoomCapacity(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all text-gray-900"
-                  placeholder="e.g. 2"
-                />
-              </div>
-              
-              <div className="pt-2">
-                 <button 
-                   onClick={handleAdd}
-                   disabled={!newRoomId.trim() || isPending}
-                   className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
-                 >
-                   Save Room
-                 </button>
-              </div>
-            </div>
+              );
+            })}
           </div>
         </div>
-      )}
+      ))}
 
-      {/* Assignment Modal */}
+      {/* Room Management Modal */}
       {selectedRoom && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white/95 backdrop-blur-md sticky top-0 z-10">
-              <h2 className="text-xl font-bold text-gray-900">Room {selectedRoom.Room_ID}</h2>
-              <button 
-                onClick={() => { setSelectedRoom(null); setAssigneeName(''); }}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50"
-              >
-                <X size={20} className="text-gray-500" />
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedRoom(null)} />
+          <div className="relative bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full duration-300 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-gray-900">Room {selectedRoom.Room_ID}</h2>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{selectedRoom.Location}</p>
+              </div>
+              <button onClick={() => setSelectedRoom(null)} className="p-2 rounded-full bg-gray-50 text-gray-400">
+                <X size={20} />
               </button>
             </div>
-            
-            <div className="p-6 space-y-5">
-              <div className="bg-gray-50/80 border border-gray-100 p-5 rounded-2xl mb-2">
-                <p className="text-sm font-semibold text-gray-500 mb-2">Current Occupants</p>
-                <div className="flex flex-wrap gap-2">
-                  {selectedRoom.Occupant_Names ? (
-                    selectedRoom.Occupant_Names.split(',').map((name, i) => (
-                      <span key={i} className="px-3 py-1 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-800 shadow-sm">
-                        {name.trim()}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-gray-400 italic">No occupants</span>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              {/* Occupancy Progress Bar */}
+              <div>
+                <div className="flex justify-between items-end mb-2">
+                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Occupancy</h4>
+                  <span className="text-sm font-black text-gray-900">
+                    {selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0} / {selectedRoom.Capacity}
+                  </span>
+                </div>
+                <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-500 ${
+                      (selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) >= (parseInt(selectedRoom.Capacity || '0')) 
+                        ? 'bg-red-500' 
+                        : 'bg-green-500'
+                    }`}
+                    style={{ width: `${Math.min(100, ((selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) / (parseInt(selectedRoom.Capacity || '0') || 1)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Occupants List */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Current Occupants</h4>
+                <div className="space-y-2">
+                  {selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map((name, i) => (
+                    <div key={i} className="flex justify-between items-center bg-gray-50 p-4 rounded-xl border border-gray-100">
+                      <span className="font-bold text-gray-800">{name.trim()}</span>
+                      <button 
+                        onClick={() => removeGuestFromRoom(i)}
+                        className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-gray-400 italic py-2">No occupants yet</p>
                   )}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Assign New Guest
-                </label>
-                <input 
-                  type="text"
-                  value={assigneeName}
-                  onChange={(e) => setAssigneeName(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all text-gray-900"
-                  placeholder="Type guest name..."
-                  autoFocus
-                />
+              {/* Add Guest Search */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Assign Guest</h4>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="text"
+                    placeholder="Search unassigned guests..."
+                    value={guestSearch}
+                    onChange={(e) => setGuestSearch(e.target.value)}
+                    disabled={(selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) >= (parseInt(selectedRoom.Capacity || '0') || 0)}
+                    className="w-full bg-gray-50 border-none rounded-xl py-3.5 pl-11 pr-4 focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100 text-sm font-medium"
+                  />
+                </div>
+                
+                {guestSearch && unassignedGuests.length > 0 && (
+                  <div className="bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden divide-y divide-gray-50">
+                    {unassignedGuests.map(guest => (
+                      <button 
+                        key={guest.Guest_ID}
+                        onClick={() => addGuestToRoom(guest.Name || '')}
+                        className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between group"
+                      >
+                        <span className="font-bold text-gray-700">{guest.Name}</span>
+                        <Plus size={16} className="text-blue-500 opacity-0 group-hover:opacity-100" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              
-              <div className="pt-2 pb-2">
-                 <button 
-                   onClick={handleAssign}
-                   disabled={!assigneeName.trim() || isPending}
-                   className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold hover:bg-black shadow-lg shadow-gray-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                 >
-                   Assign Guest
-                 </button>
-              </div>
+            </div>
+            
+            <div className="p-6 pt-2">
+              <button 
+                onClick={() => setSelectedRoom(null)}
+                className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black hover:bg-black shadow-xl shadow-gray-200 transition-all active:scale-[0.98]"
+              >
+                Close Management
+              </button>
             </div>
           </div>
         </div>

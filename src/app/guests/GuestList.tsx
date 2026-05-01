@@ -1,304 +1,282 @@
 'use client';
 
-import { useState, useOptimistic, useTransition } from 'react';
-import { Guest } from '@/lib/google-sheets';
-import { Search, Phone, BedDouble, Car, X, Plus, UserPlus, Edit3 } from 'lucide-react';
+import { useState, useOptimistic, useTransition, useMemo } from 'react';
+import { Guest, Room, VehicleTrip } from '@/lib/google-sheets';
+import { Search, MapPin, Car, Phone, X, Save, ArrowLeft, CheckCircle2, Circle, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
+import { triggerSync } from '@/lib/sync-util';
 
-export function GuestList({ initialGuests }: { initialGuests: Guest[] }) {
+interface GuestListProps {
+  initialGuests: Guest[];
+  allRooms: Room[];
+  allVehicles: VehicleTrip[];
+}
+
+export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListProps) {
   const [search, setSearch] = useState('');
   const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
-  const [isAddMode, setIsAddMode] = useState(false);
-  const [newGuestName, setNewGuestName] = useState('');
-  const [newGuestPhone, setNewGuestPhone] = useState('');
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  
+  // Profile editing state
+  const [tempPhone, setTempPhone] = useState('');
+  const [isPhoneModified, setIsPhoneModified] = useState(false);
   
   const [optimisticGuests, addOptimisticGuest] = useOptimistic(
     initialGuests,
-    (state: Guest[], action: { type: 'add' | 'update', guest: Guest }) => {
-      if (action.type === 'add') {
-        return [...state, action.guest];
-      }
-      return state.map(g => g.Guest_ID === action.guest.Guest_ID ? action.guest : g);
+    (state: Guest[], updatedGuest: Guest) => {
+      return state.map(g => g.Guest_ID === updatedGuest.Guest_ID ? updatedGuest : g);
     }
   );
 
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const filteredGuests = optimisticGuests.filter(g => 
-    g.Name?.toLowerCase().includes(search.toLowerCase()) || 
-    g.Phone?.includes(search)
-  );
+  const filteredGuests = useMemo(() => {
+    return optimisticGuests.filter(g => 
+      g.Name?.toLowerCase().includes(search.toLowerCase()) || 
+      g.Phone?.toLowerCase().includes(search.toLowerCase())
+    );
+  }, [optimisticGuests, search]);
 
-  const handleUpdate = async (guestId: string, updates: Partial<Guest>) => {
-    const originalGuest = optimisticGuests.find(g => g.Guest_ID === guestId);
-    if (!originalGuest) return;
+  const handleOpenProfile = (guest: Guest) => {
+    setSelectedGuest(guest);
+    setTempPhone(guest.Phone || '');
+    setIsPhoneModified(false);
+    setIsProfileOpen(true);
+  };
 
-    const newGuest = { ...originalGuest, ...updates };
+  const handleUpdateGuest = async (updates: Partial<Guest>, successMessage: string) => {
+    if (!selectedGuest) return;
+    
+    const updatedGuest = { ...selectedGuest, ...updates };
     
     startTransition(() => {
-      addOptimisticGuest({ type: 'update', guest: newGuest });
-      if (selectedGuest?.Guest_ID === guestId) {
-        setSelectedGuest(newGuest);
-      }
+      addOptimisticGuest(updatedGuest);
+      setSelectedGuest(updatedGuest);
     });
 
     try {
+      triggerSync();
       const res = await fetch('/api/guests', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: guestId, updates })
+        body: JSON.stringify({ id: selectedGuest.Guest_ID, updates }),
       });
+      
       if (!res.ok) throw new Error('Update failed');
+      
+      toast.success(successMessage);
       router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to update guest in database.');
+    } catch (e) {
+      toast.error('Failed to update guest');
       router.refresh();
     }
   };
 
-  const handleAdd = async () => {
-    if (!newGuestName.trim()) return;
+  const toggleCheckIn = () => {
+    if (!selectedGuest) return;
+    const isCheckedIn = selectedGuest.Status === 'Checked-In';
+    const newStatus = isCheckedIn ? 'Pending' : 'Checked-In';
+    handleUpdateGuest({ Status: newStatus }, isCheckedIn ? 'Check-in undone' : 'Guest checked in successfully!');
+  };
 
-    const tempId = `TEMP_${Date.now()}`;
-    const newGuest: Guest = {
-      Guest_ID: tempId,
-      Name: newGuestName.trim(),
-      Phone: newGuestPhone.trim(),
-      Arrival_Time: '',
-      Depart_Time: '',
-      Room_ID: '',
-      Vehicle_ID: '',
-      Status: ''
-    };
-
-    startTransition(() => {
-      addOptimisticGuest({ type: 'add', guest: newGuest });
-      setIsAddMode(false);
-      setNewGuestName('');
-      setNewGuestPhone('');
-    });
-
-    try {
-      const res = await fetch('/api/guests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newGuest)
-      });
-      if (!res.ok) throw new Error('Add failed');
-      router.refresh();
-    } catch (error) {
-      console.error(error);
-      alert('Failed to add guest to database.');
-      router.refresh();
-    }
+  const savePhone = () => {
+    handleUpdateGuest({ Phone: tempPhone }, 'Phone number updated');
+    setIsPhoneModified(false);
   };
 
   return (
-    <div className="relative pb-24">
-      <div className="flex justify-between items-center mb-6 px-1">
-        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-          Guests
-        </h1>
-        <button 
-          onClick={() => setIsAddMode(true)}
-          className="flex items-center space-x-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2 rounded-full shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50 transition-all active:scale-95"
-        >
-          <Plus size={18} />
-          <span className="font-medium text-sm">Add Guest</span>
-        </button>
-      </div>
-
-      <div className="relative mb-6">
-        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-          <Search className="h-5 w-5 text-gray-400" />
+    <div className="relative">
+      {/* Sticky Search Bar */}
+      <div className="sticky top-0 z-20 bg-[#F9FAFB]/80 backdrop-blur-md py-3 -mx-4 px-4">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+          <input 
+            type="text"
+            placeholder="Search name or phone..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full bg-white border-none rounded-2xl py-4 pl-12 pr-4 shadow-sm ring-1 ring-gray-100 focus:ring-2 focus:ring-blue-500 transition-all text-base"
+          />
         </div>
-        <input
-          type="text"
-          placeholder="Search guests by name or phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="block w-full pl-11 pr-4 py-3.5 border-none rounded-2xl bg-white/70 backdrop-blur-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:text-base shadow-sm ring-1 ring-gray-100 transition-all"
-        />
       </div>
 
-      <div className="space-y-4">
+      {/* Guest List */}
+      <div className="mt-4 space-y-3 pb-4">
         {filteredGuests.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white/50 backdrop-blur-sm rounded-3xl border border-dashed border-gray-200">
-            <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
-              <UserPlus className="text-blue-500" size={28} />
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+              <Users className="text-gray-300" size={40} />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">No guests found</h3>
-            <p className="text-gray-500 text-sm max-w-[250px]">
-              {search ? "We couldn't find anyone matching your search." : "Your guest list is empty. Add a new guest to get started."}
-            </p>
-            {!search && (
-              <button 
-                onClick={() => setIsAddMode(true)}
-                className="mt-6 px-6 py-2.5 bg-white text-blue-600 border border-blue-200 rounded-full font-medium shadow-sm active:scale-95 transition-transform"
-              >
-                Add First Guest
-              </button>
-            )}
+            <p className="text-gray-500 font-medium">No guests found matching &quot;{search}&quot;</p>
           </div>
         ) : (
           filteredGuests.map(guest => (
             <div 
               key={guest.Guest_ID}
-              onClick={() => setSelectedGuest(guest)}
-              className="group bg-white p-5 rounded-2xl shadow-sm border border-gray-100/80 flex justify-between items-center cursor-pointer hover:shadow-md hover:border-blue-100 transition-all active:scale-[0.98] relative overflow-hidden"
+              onClick={() => handleOpenProfile(guest)}
+              className="bg-white p-5 rounded-2xl border border-gray-50 shadow-sm active:scale-[0.98] transition-all cursor-pointer"
             >
-              <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-gray-900">{guest.Name || 'Unnamed Guest'}</h3>
-                
-                <div className="flex flex-wrap items-center gap-3 mt-2">
-                  {guest.Phone && (
-                    <span className="flex items-center text-xs font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded-md">
-                      <Phone size={12} className="mr-1.5 text-gray-400" /> {guest.Phone}
-                    </span>
-                  )}
-                  {guest.Room_ID && (
-                    <span className="flex items-center text-xs font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
-                      <BedDouble size={12} className="mr-1.5" /> {guest.Room_ID}
-                    </span>
-                  )}
-                  {guest.Vehicle_ID && (
-                    <span className="flex items-center text-xs font-medium text-purple-700 bg-purple-50 px-2 py-1 rounded-md border border-purple-100">
-                      <Car size={12} className="mr-1.5" /> {guest.Vehicle_ID}
-                    </span>
-                  )}
-                </div>
+              <div className="flex justify-between items-start mb-3">
+                <h3 className="text-lg font-bold text-gray-900 leading-tight">
+                  {guest.Name}
+                </h3>
+                <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                  guest.Status === 'Checked-In' 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {guest.Status || 'Pending'}
+                </span>
               </div>
-              <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center group-hover:bg-blue-50 transition-colors">
-                <Edit3 size={18} className="text-gray-400 group-hover:text-blue-500" />
+              
+              <div className="flex items-center space-x-6">
+                <div className="flex items-center text-xs font-medium text-gray-400">
+                  <MapPin size={14} className="mr-1.5" />
+                  <span className={guest.Room_ID ? 'text-gray-700' : ''}>
+                    {guest.Room_ID || 'Unassigned'}
+                  </span>
+                </div>
+                <div className="flex items-center text-xs font-medium text-gray-400">
+                  <Car size={14} className="mr-1.5" />
+                  <span className={guest.Vehicle_ID ? 'text-gray-700' : ''}>
+                    {guest.Vehicle_ID || 'Unassigned'}
+                  </span>
+                </div>
               </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Add Guest Modal */}
-      {isAddMode && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300 border border-white/20">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white">
-              <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">Add New Guest</h2>
+      {/* Slide-over Profile Modal */}
+      {isProfileOpen && selectedGuest && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div 
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in"
+            onClick={() => setIsProfileOpen(false)}
+          />
+          <div className="relative w-full max-w-[480px] bg-white h-full flex flex-col shadow-2xl animate-in slide-in-from-bottom-full duration-300">
+            {/* Modal Header */}
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center h-20">
               <button 
-                onClick={() => { setIsAddMode(false); setNewGuestName(''); setNewGuestPhone(''); }}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50"
+                onClick={() => setIsProfileOpen(false)}
+                className="p-2 -ml-2 rounded-full hover:bg-gray-50 text-gray-500"
               >
-                <X size={20} className="text-gray-500" />
+                <ArrowLeft size={24} />
+              </button>
+              <h2 className="ml-2 text-xl font-extrabold text-gray-900">
+                {selectedGuest.Name}
+              </h2>
+              <button 
+                onClick={() => setIsProfileOpen(false)}
+                className="ml-auto p-2 rounded-full hover:bg-gray-50 text-gray-400"
+              >
+                <X size={24} />
               </button>
             </div>
-            
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Full Name <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  type="text"
-                  value={newGuestName}
-                  onChange={(e) => setNewGuestName(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all text-gray-900"
-                  placeholder="e.g. John Doe"
-                  autoFocus
-                />
-              </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Phone Number
-                </label>
-                <input 
-                  type="tel"
-                  value={newGuestPhone}
-                  onChange={(e) => setNewGuestPhone(e.target.value)}
-                  className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all text-gray-900"
-                  placeholder="e.g. +91 9876543210"
-                />
-              </div>
-              
-              <div className="pt-2">
-                 <button 
-                   onClick={handleAdd}
-                   disabled={!newGuestName.trim() || isPending}
-                   className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50 transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
-                 >
-                   Save Guest
-                 </button>
-              </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-32">
+              {/* Section 1: Contact */}
+              <section>
+                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Contact Details</h4>
+                <div className="flex space-x-3">
+                  <div className="relative flex-1">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+                      <Phone size={18} />
+                    </div>
+                    <input 
+                      type="tel"
+                      value={tempPhone}
+                      onChange={(e) => {
+                        setTempPhone(e.target.value);
+                        setIsPhoneModified(true);
+                      }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3.5 pl-12 pr-4 focus:ring-2 focus:ring-blue-500 text-gray-900 font-medium"
+                      placeholder="Phone number"
+                    />
+                  </div>
+                  {isPhoneModified && (
+                    <button 
+                      onClick={savePhone}
+                      className="bg-blue-600 text-white p-3.5 rounded-xl shadow-lg shadow-blue-200 active:scale-95 transition-all"
+                    >
+                      <Save size={20} />
+                    </button>
+                  ) }
+                </div>
+              </section>
+
+              {/* Section 2: Travel Itinerary (Read-Only) */}
+              <section>
+                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Travel Itinerary</h4>
+                <div className="bg-gray-100/80 rounded-2xl p-5 border border-gray-200/50 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-gray-500 flex items-center">
+                      <Clock size={16} className="mr-2" /> Arrival
+                    </span>
+                    <span className="text-sm font-black text-gray-800">{selectedGuest.Arrival_Time || '--:--'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-gray-500 flex items-center">
+                      <Clock size={16} className="mr-2" /> Departure
+                    </span>
+                    <span className="text-sm font-black text-gray-800">{selectedGuest.Depart_Time || '--:--'}</span>
+                  </div>
+                </div>
+              </section>
+
+              {/* Section 3: Logistics Assignments */}
+              <section className="space-y-6">
+                <div>
+                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Assigned Room</h4>
+                  <select 
+                    value={selectedGuest.Room_ID || ''}
+                    onChange={(e) => handleUpdateGuest({ Room_ID: e.target.value }, `Assigned to Room ${e.target.value}`)}
+                    className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 focus:ring-2 focus:ring-blue-500 text-gray-900 font-bold appearance-none ring-1 ring-gray-100"
+                  >
+                    <option value="">Select a Room</option>
+                    {allRooms.map(room => (
+                      <option key={room.Room_ID} value={room.Room_ID}>
+                        {room.Room_ID} - {room.Location} ({room.Status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Assigned Vehicle</h4>
+                  <select 
+                    value={selectedGuest.Vehicle_ID || ''}
+                    onChange={(e) => handleUpdateGuest({ Vehicle_ID: e.target.value }, `Assigned to Vehicle ${e.target.value}`)}
+                    className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 focus:ring-2 focus:ring-blue-500 text-gray-900 font-bold appearance-none ring-1 ring-gray-100"
+                  >
+                    <option value="">Select a Vehicle</option>
+                    {/* We should ideally group vehicles/trips, but for now we list trips */}
+                    {allVehicles.map(v => (
+                      <option key={v.Trip_ID} value={v.Vehicle_Number}>
+                        {v.Vehicle_Number} ({v.Driver_Name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </section>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Edit Guest Profile Modal */}
-      {selectedGuest && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md sm:rounded-3xl rounded-t-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-10 duration-300">
-            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white/95 backdrop-blur-md sticky top-0 z-10">
-              <h2 className="text-xl font-bold text-gray-900 truncate pr-4">{selectedGuest.Name}</h2>
+            {/* Section 4: Check-In Action */}
+            <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-100">
               <button 
-                onClick={() => setSelectedGuest(null)}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors bg-gray-50 shrink-0"
+                onClick={toggleCheckIn}
+                disabled={isPending}
+                className={`w-full py-5 rounded-2xl font-black text-lg shadow-xl transition-all active:scale-[0.98] ${
+                  selectedGuest.Status === 'Checked-In'
+                    ? 'border-2 border-red-500 text-red-500 bg-white hover:bg-red-50'
+                    : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200'
+                }`}
               >
-                <X size={20} className="text-gray-500" />
+                {selectedGuest.Status === 'Checked-In' ? 'Undo Check-In' : 'Check-In Guest'}
               </button>
-            </div>
-            
-            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center">
-                    <Phone size={16} className="mr-2 text-blue-500" /> Phone Number
-                  </label>
-                  <input 
-                    type="tel"
-                    defaultValue={selectedGuest.Phone}
-                    onBlur={(e) => handleUpdate(selectedGuest.Guest_ID, { Phone: e.target.value })}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all text-gray-900 font-medium"
-                    placeholder="Add phone number"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center">
-                    <BedDouble size={16} className="mr-2 text-indigo-500" /> Room Assignment
-                  </label>
-                  <input 
-                    type="text"
-                    defaultValue={selectedGuest.Room_ID}
-                    onBlur={(e) => handleUpdate(selectedGuest.Guest_ID, { Room_ID: e.target.value })}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all text-gray-900 font-medium"
-                    placeholder="Assign a room"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5 flex items-center">
-                    <Car size={16} className="mr-2 text-purple-500" /> Vehicle Assignment
-                  </label>
-                  <input 
-                    type="text"
-                    defaultValue={selectedGuest.Vehicle_ID}
-                    onBlur={(e) => handleUpdate(selectedGuest.Guest_ID, { Vehicle_ID: e.target.value })}
-                    className="w-full border-0 ring-1 ring-gray-200 rounded-xl p-3.5 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-purple-500 transition-all text-gray-900 font-medium"
-                    placeholder="Assign a vehicle"
-                  />
-                </div>
-              </div>
-              
-              <div className="pt-4 pb-2">
-                 <button 
-                   onClick={() => setSelectedGuest(null)}
-                   className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold hover:bg-black shadow-lg shadow-gray-900/20 transition-all active:scale-[0.98]"
-                 >
-                   Done Editing
-                 </button>
-              </div>
             </div>
           </div>
         </div>

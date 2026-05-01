@@ -3,44 +3,37 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Users, BedDouble, Car } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 export function BottomNav() {
   const pathname = usePathname();
 
   const navItems = [
-    { href: '/guests', label: 'Guests', icon: Users },
-    { href: '/rooms', label: 'Rooms', icon: BedDouble },
-    { href: '/vehicles', label: 'Vehicles', icon: Car },
+    { name: 'Guests', path: '/guests', icon: Users },
+    { name: 'Rooms', path: '/rooms', icon: BedDouble },
+    { name: 'Vehicles', path: '/vehicles', icon: Car },
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 pb-safe z-50">
-      <div className="flex justify-around items-center h-16">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = pathname.startsWith(item.href);
-          
-          return (
-            <Link 
-              key={item.href} 
-              href={item.href}
-              className={cn(
-                "flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors",
-                isActive ? "text-blue-600" : "text-gray-500 hover:text-gray-900"
-              )}
-            >
-              <Icon size={24} className={isActive ? "fill-blue-100" : ""} />
-              <span className="text-xs font-medium">{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
-    </div>
+    <nav className="fixed bottom-0 w-full max-w-[480px] bg-white border-t border-gray-100 flex items-center h-20 px-2 z-30">
+      {navItems.map((item) => {
+        const isActive = pathname.startsWith(item.path);
+        const Icon = item.icon;
+        
+        return (
+          <Link
+            key={item.path}
+            href={item.path}
+            className="flex-1 flex flex-col items-center justify-center space-y-1 group"
+          >
+            <div className={`p-1.5 rounded-xl transition-colors ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`}>
+              <Icon size={24} strokeWidth={isActive ? 2.5 : 2} />
+            </div>
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`}>
+              {item.name}
+            </span>
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
