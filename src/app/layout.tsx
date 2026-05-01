@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { BottomNav } from '@/components/BottomNav';
-import { VoiceFAB } from '@/components/VoiceFAB';
+import { AIFAB } from '@/components/AIFAB';
 import { TopAppBar } from '@/components/TopAppBar';
 import { Toaster } from 'react-hot-toast';
 
@@ -29,7 +29,7 @@ export default function RootLayout({
             {children}
           </main>
 
-          <VoiceFAB />
+          <AIFAB />
           <BottomNav />
           <Toaster 
             position="top-center"
