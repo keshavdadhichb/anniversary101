@@ -1,11 +1,9 @@
 const { google } = require('googleapis');
 const path = require('path');
-const fs = require('fs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env.local') });
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
-// Normalize private key string
 const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY
   ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
   : '';
@@ -85,53 +83,90 @@ async function migrate() {
     });
   }
 
-  // 3. Extract existing guest names
+  // 3. Extract data from "FINAL" tab
   const uniqueNames = new Set();
-  const tabsToScan = existingSheets.filter(t => !NEW_SHEETS.some(ns => ns.title === t));
-  console.log(`Scanning tabs for guest names: ${tabsToScan.join(', ')}`);
+  const vehiclesTripsData = [];
+  const EXCLUDED_STRINGS = ["VEHICLE", "EARTIGA", "URBANIYA", "URBANIA", "INNOVA", "TRAIN", "BOOKING", "KMS", "JAIPUR", "SIKAR", "PER DAY", "RATE"];
 
-  for (const tab of tabsToScan) {
-    try {
-      const data = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `${tab}!A:Z`,
-      });
-      const rows = data.data.values;
-      if (!rows || rows.length === 0) continue;
+  try {
+    const data = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `FINAL!A:Z`,
+    });
+    
+    const rows = data.data.values || [];
+    
+    let currentTrip = null;
 
-      // Try to find a "Name" column
-      const headerRow = rows[0].map(h => String(h).toLowerCase());
-      let nameColIndex = headerRow.findIndex(h => h.includes('name'));
-      if (nameColIndex === -1) {
-        // Fallback to first column
-        nameColIndex = 0;
+    // Start from row index 2 (ignoring row 1 and row 2 which are index 0 and 1)
+    for (let i = 2; i < rows.length; i++) {
+      const row = rows[i];
+      const colA_Raw = row[0] || "";
+      const colB_Date = row[1] || "";
+      const colE_Vehicle = row[4] || "";
+      const colF_Point = row[5] || "";
+      const colM_Total = row[12] || "";
+
+      const colA = String(colA_Raw).trim();
+      const isExcluded = EXCLUDED_STRINGS.some(str => colA.toUpperCase().includes(str));
+
+      // Guest Extraction
+      if (colA && !isExcluded) {
+        uniqueNames.add(colA);
       }
 
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const name = row[nameColIndex];
-        if (name && typeof name === 'string' && name.trim().length > 0) {
-          uniqueNames.add(name.trim());
+      // Vehicle Trip Extraction Logic
+      if (colE_Vehicle && String(colE_Vehicle).trim() !== "") {
+        // A new trip begins
+        if (currentTrip) {
+          vehiclesTripsData.push(currentTrip);
+        }
+        
+        currentTrip = {
+          Vehicle_Number: String(colE_Vehicle).trim(),
+          Depart_Time: String(colB_Date).trim(),
+          From_Location: String(colF_Point).trim(),
+          Trip_Cost: String(colM_Total).trim(),
+          passengersList: []
+        };
+        
+        // Add current row passenger
+        if (colA && !isExcluded) {
+          currentTrip.passengersList.push(colA);
+        }
+      } else if (currentTrip) {
+        // Continue adding passengers to current trip if no new vehicle
+        // Stop if we hit an empty row
+        if (row.length === 0 || (colA === "" && Object.values(row).every(v => !v || String(v).trim() === ''))) {
+          vehiclesTripsData.push(currentTrip);
+          currentTrip = null; // trip ended
+        } else if (colA && !isExcluded) {
+          currentTrip.passengersList.push(colA);
         }
       }
-    } catch (e) {
-      console.log(`Could not read tab ${tab}: ${e.message}`);
     }
+    
+    // push the last trip if any
+    if (currentTrip) {
+      vehiclesTripsData.push(currentTrip);
+    }
+
+  } catch (e) {
+    console.log(`Could not read tab FINAL: ${e.message}`);
   }
 
-  console.log(`Found ${uniqueNames.size} unique guest names.`);
+  console.log(`Found ${uniqueNames.size} clean unique guest names.`);
+  console.log(`Extracted ${vehiclesTripsData.length} trips.`);
 
   // 4. Append to GUESTS tab
   if (uniqueNames.size > 0) {
-    // Check existing names in GUESTS to avoid duplicates
     const guestsData = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `GUESTS!A:B`, // Guest_ID is A, Name is B
+      range: `GUESTS!A:B`,
     });
     
     const existingGuestNames = new Set();
     const guestRows = guestsData.data.values || [];
-    // start from row 1 to skip header
     for (let i = 1; i < guestRows.length; i++) {
       if (guestRows[i][1]) {
         existingGuestNames.add(guestRows[i][1].trim());
@@ -139,7 +174,7 @@ async function migrate() {
     }
 
     const newNames = Array.from(uniqueNames).filter(n => !existingGuestNames.has(n));
-    console.log(`${newNames.length} names are new and will be added.`);
+    console.log(`${newNames.length} names are new and will be added to GUESTS.`);
 
     if (newNames.length > 0) {
       let currentId = guestRows.length > 1 ? guestRows.length : 1;
@@ -153,12 +188,52 @@ async function migrate() {
         spreadsheetId,
         range: `GUESTS!A:H`,
         valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
         requestBody: {
           values,
         },
       });
       console.log(`Successfully migrated ${newNames.length} guests.`);
     }
+  }
+
+  // 5. Append to VEHICLES_TRIPS tab
+  if (vehiclesTripsData.length > 0) {
+    const vehiclesData = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `VEHICLES_TRIPS!A:A`,
+    });
+    
+    const existingTripsCount = (vehiclesData.data.values || []).length;
+    let currentTripId = existingTripsCount > 1 ? existingTripsCount : 1;
+
+    const values = vehiclesTripsData.map(trip => {
+      const id = `T${String(currentTripId++).padStart(4, '0')}`;
+      // Trip_ID, Vehicle_Number, Driver_Name, Driver_Phone, From_Location, To_Location, Passengers, Depart_Time, Distance_KM, Trip_Cost
+      return [
+        id, 
+        trip.Vehicle_Number, 
+        '', // Driver_Name
+        '', // Driver_Phone
+        trip.From_Location, 
+        '', // To_Location
+        trip.passengersList.join(', '), // Passengers
+        trip.Depart_Time, 
+        '', // Distance_KM
+        trip.Trip_Cost
+      ];
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `VEHICLES_TRIPS!A:J`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values,
+      },
+    });
+    console.log(`Successfully migrated ${values.length} trips.`);
   }
 
   console.log('Migration completed successfully.');
