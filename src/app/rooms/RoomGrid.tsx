@@ -3,7 +3,7 @@
 import { useState, useOptimistic, useTransition, useMemo } from 'react';
 import { Room, Guest } from '@/lib/google-sheets';
 import { useRouter } from 'next/navigation';
-import { Users, MapPin, X, Trash2, Search, Plus, Home, PlusCircle, LayoutGrid, Layers } from 'lucide-react';
+import { Users, MapPin, X, Trash2, Search, Plus, Home, PlusCircle, LayoutGrid, Layers, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { triggerSync } from '@/lib/sync-util';
 
@@ -13,7 +13,7 @@ interface RoomGridProps {
 }
 
 export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [guestSearch, setGuestSearch] = useState('');
   
@@ -39,16 +39,28 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const stats = useMemo(() => {
-    let occupied = 0;
-    let total = 0;
-    optimisticRooms.forEach(r => {
-      const occupants = r.Occupant_Names ? r.Occupant_Names.split(',').length : 0;
-      occupied += occupants;
-      total += parseInt(r.Capacity || '0') || 0;
+  // DERIVE OCCUPANCY IN REAL-TIME FROM ALL GUESTS
+  const roomOccupancy = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    allGuests.forEach(g => {
+      if (g.Room_ID) {
+        if (!map[g.Room_ID]) map[g.Room_ID] = [];
+        map[g.Room_ID].push(g.Name);
+      }
     });
-    return { occupied, total };
-  }, [optimisticRooms]);
+    return map;
+  }, [allGuests]);
+
+  const stats = useMemo(() => {
+    let occupiedCount = 0;
+    let totalCapacity = 0;
+    optimisticRooms.forEach(r => {
+      const occupants = roomOccupancy[r.Room_ID] || [];
+      occupiedCount += occupants.length;
+      totalCapacity += parseInt(r.Capacity || '0') || 0;
+    });
+    return { occupiedCount, totalCapacity };
+  }, [optimisticRooms, roomOccupancy]);
 
   const roomsByLocation = optimisticRooms.reduce((acc, room) => {
     const loc = room.Location || 'Unassigned';
@@ -57,12 +69,16 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
     return acc;
   }, {} as Record<string, Room[]>);
 
+  const selectedRoom = useMemo(() => 
+    optimisticRooms.find(r => r.Room_ID === selectedRoomId),
+    [optimisticRooms, selectedRoomId]
+  );
+
   const handleUpdateRoom = async (room: Room, updates: Partial<Room>) => {
     const updatedRoom = { ...room, ...updates };
 
     startTransition(() => {
       addOptimisticRoom(updatedRoom);
-      setSelectedRoom(updatedRoom);
     });
 
     try {
@@ -119,25 +135,19 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
     }
   };
 
-  const addGuestToRoom = (guestName: string) => {
-    if (!selectedRoom) return;
-    const current = selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map(n => n.trim()).filter(Boolean) : [];
-    if (current.length >= (parseInt(selectedRoom.Capacity || '0') || 0)) {
-      toast.error('Room is at full capacity');
-      return;
+  const updateGuestRoom = async (guestId: string, roomId: string | null) => {
+    try {
+      triggerSync();
+      const res = await fetch('/api/guests', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: guestId, updates: { Room_ID: roomId || '' } }),
+      });
+      if (!res.ok) throw new Error('Update failed');
+      router.refresh();
+    } catch (e) {
+      toast.error('Failed to move guest');
     }
-    const updated = [...current, guestName].join(', ');
-    handleUpdateRoom(selectedRoom, { Occupant_Names: updated, Status: 'Occupied' });
-    setGuestSearch('');
-  };
-
-  const removeGuestFromRoom = (index: number) => {
-    if (!selectedRoom) return;
-    const current = selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map(n => n.trim()).filter(Boolean) : [];
-    current.splice(index, 1);
-    const updated = current.join(', ');
-    const newStatus = current.length === 0 ? 'Available' : 'Occupied';
-    handleUpdateRoom(selectedRoom, { Occupant_Names: updated, Status: newStatus });
   };
 
   const unassignedGuests = useMemo(() => {
@@ -152,8 +162,8 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
       {/* Header Stats */}
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-100 flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Overall Capacity</h3>
-          <p className="text-2xl font-black text-gray-900">{stats.occupied}<span className="text-gray-300 mx-1">/</span>{stats.total}</p>
+          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Live Occupancy</h3>
+          <p className="text-2xl font-black text-gray-900">{stats.occupiedCount}<span className="text-gray-300 mx-1">/</span>{stats.totalCapacity}</p>
         </div>
         <button 
           onClick={() => setIsAddModalOpen(true)}
@@ -169,22 +179,25 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
           
           <div className="grid grid-cols-3 gap-3">
             {rooms.map(room => {
-              const occupants = room.Occupant_Names ? room.Occupant_Names.split(',').filter(Boolean).length : 0;
+              const occupants = roomOccupancy[room.Room_ID] || [];
               const capacity = parseInt(room.Capacity || '0') || 0;
-              const isFull = occupants >= capacity;
+              const isFull = occupants.length >= capacity;
+              const isPartiallyFull = occupants.length > 0 && occupants.length < capacity;
               
               return (
                 <div
                   key={room.Room_ID}
-                  onClick={() => setSelectedRoom(room)}
+                  onClick={() => setSelectedRoomId(room.Room_ID)}
                   className={`aspect-square rounded-2xl flex flex-col items-center justify-center relative cursor-pointer transition-all active:scale-95 shadow-sm border-2 ${
                     isFull 
-                      ? 'bg-red-50 border-red-100 text-red-600' 
-                      : 'bg-green-50 border-green-100 text-green-600'
+                      ? 'bg-red-50 border-red-200 text-red-600' 
+                      : isPartiallyFull
+                        ? 'bg-blue-50 border-blue-200 text-blue-600'
+                        : 'bg-green-50 border-green-100 text-green-600'
                   }`}
                 >
                   <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-white/80 backdrop-blur-sm text-[10px] font-black border border-inherit">
-                    {occupants}/{capacity}
+                    {occupants.length}/{capacity}
                   </div>
                   <span className="text-xl font-black">{room.Room_ID}</span>
                 </div>
@@ -194,7 +207,7 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
         </div>
       ))}
 
-      {/* Add Room Modal (V2) */}
+      {/* Add Room Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-md animate-in fade-in" onClick={() => setIsAddModalOpen(false)} />
@@ -211,26 +224,13 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
             
             <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-gray-50">
               <section className="bg-white p-6 rounded-3xl shadow-sm space-y-6">
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 flex items-center">
-                  <LayoutGrid size={14} className="mr-2" /> Room Identity
-                </h4>
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-2">Room ID / Number <span className="text-red-500">*</span></label>
-                  <input 
-                    type="text"
-                    value={newRoom.Room_ID}
-                    onChange={(e) => setNewRoom({...newRoom, Room_ID: e.target.value})}
-                    className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none"
-                    placeholder="e.g. 101"
-                  />
+                  <input type="text" value={newRoom.Room_ID} onChange={(e) => setNewRoom({...newRoom, Room_ID: e.target.value})} className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none" />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-2">Location <span className="text-red-500">*</span></label>
-                  <select 
-                    value={newRoom.Location}
-                    onChange={(e) => setNewRoom({...newRoom, Location: e.target.value})}
-                    className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none appearance-none"
-                  >
+                  <select value={newRoom.Location} onChange={(e) => setNewRoom({...newRoom, Location: e.target.value})} className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none appearance-none">
                     <option value="">Select Location</option>
                     <option value="Hotel A">Hotel A</option>
                     <option value="Hotel B">Hotel B</option>
@@ -238,43 +238,10 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
                   </select>
                 </div>
               </section>
-
-              <section className="bg-white p-6 rounded-3xl shadow-sm space-y-6">
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 flex items-center">
-                  <Layers size={14} className="mr-2" /> Capacity & Status
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-2">Capacity</label>
-                    <input 
-                      type="number"
-                      value={newRoom.Capacity}
-                      onChange={(e) => setNewRoom({...newRoom, Capacity: e.target.value})}
-                      className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-2">Initial Status</label>
-                    <select 
-                      value={newRoom.Status}
-                      onChange={(e) => setNewRoom({...newRoom, Status: e.target.value})}
-                      className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-5 font-black text-gray-900 transition-all outline-none appearance-none"
-                    >
-                      <option value="Available">Available</option>
-                      <option value="Occupied">Occupied</option>
-                    </select>
-                  </div>
-                </div>
-              </section>
             </div>
             
             <div className="p-8 bg-white border-t border-gray-100">
-              <button 
-                onClick={handleAddRoom}
-                className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black text-xl shadow-2xl shadow-blue-100 active:scale-95 transition-all flex items-center justify-center"
-              >
-                Create Room
-              </button>
+              <button onClick={handleAddRoom} className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black text-xl shadow-2xl active:scale-95 transition-all">Create Room</button>
             </div>
           </div>
         </div>
@@ -283,60 +250,34 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
       {/* Room Management Modal */}
       {selectedRoom && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedRoom(null)} />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in" onClick={() => setSelectedRoomId(null)} />
           <div className="relative bg-white w-full max-w-md sm:rounded-[40px] rounded-t-[40px] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-full duration-300 flex flex-col max-h-[90vh]">
             <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-white shadow-sm">
               <div>
                 <h2 className="text-2xl font-black text-gray-900">Room {selectedRoom.Room_ID}</h2>
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{selectedRoom.Location}</p>
               </div>
-              <button onClick={() => setSelectedRoom(null)} className="p-3 rounded-full bg-gray-50 text-gray-400">
+              <button onClick={() => setSelectedRoomId(null)} className="p-3 rounded-full bg-gray-50 text-gray-400">
                 <X size={20} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-gray-50">
-              <section className="bg-white p-6 rounded-3xl shadow-sm space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Location</label>
-                    <select 
-                      value={selectedRoom.Location}
-                      onChange={(e) => handleUpdateRoom(selectedRoom, { Location: e.target.value })}
-                      className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 focus:ring-2 focus:ring-blue-500 font-bold text-sm appearance-none ring-1 ring-gray-100"
-                    >
-                      <option value="Hotel A">Hotel A</option>
-                      <option value="Hotel B">Hotel B</option>
-                      <option value="Home">Home</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Capacity</label>
-                    <input 
-                      type="number"
-                      value={selectedRoom.Capacity}
-                      onChange={(e) => handleUpdateRoom(selectedRoom, { Capacity: e.target.value })}
-                      className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 focus:ring-2 focus:ring-blue-500 font-bold text-sm ring-1 ring-gray-100"
-                    />
-                  </div>
-                </div>
-              </section>
-
               <section className="bg-white p-6 rounded-3xl shadow-sm space-y-4">
                 <div className="flex justify-between items-end mb-2">
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Live Occupancy</h4>
                   <span className="text-sm font-black text-gray-900">
-                    {selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0} / {selectedRoom.Capacity}
+                    {(roomOccupancy[selectedRoom.Room_ID] || []).length} / {selectedRoom.Capacity}
                   </span>
                 </div>
                 <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
                   <div 
                     className={`h-full transition-all duration-500 ${
-                      (selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) >= (parseInt(selectedRoom.Capacity || '0')) 
+                      (roomOccupancy[selectedRoom.Room_ID] || []).length >= (parseInt(selectedRoom.Capacity || '0')) 
                         ? 'bg-red-500' 
                         : 'bg-blue-600'
                     }`}
-                    style={{ width: `${Math.min(100, ((selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) / (parseInt(selectedRoom.Capacity || '0') || 1)) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (((roomOccupancy[selectedRoom.Room_ID] || []).length) / (parseInt(selectedRoom.Capacity || '0') || 1)) * 100)}%` }}
                   />
                 </div>
               </section>
@@ -344,17 +285,23 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
               <section className="bg-white p-6 rounded-3xl shadow-sm space-y-4">
                 <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Current Occupants</h4>
                 <div className="space-y-3">
-                  {selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').map((name, i) => (
-                    <div key={i} className="flex justify-between items-center bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <span className="font-bold text-gray-800">{name.trim()}</span>
-                      <button 
-                        onClick={() => removeGuestFromRoom(i)}
-                        className="p-2 text-gray-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={20} />
-                      </button>
-                    </div>
-                  )) : (
+                  {(roomOccupancy[selectedRoom.Room_ID] || []).length > 0 ? (roomOccupancy[selectedRoom.Room_ID] || []).map((name, i) => {
+                    const guest = allGuests.find(g => g.Name === name);
+                    return (
+                      <div key={i} className="flex justify-between items-center bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                        <div className="flex items-center">
+                          <User size={16} className="text-blue-500 mr-3" />
+                          <span className="font-black text-blue-900">{name}</span>
+                        </div>
+                        <button 
+                          onClick={() => { if(guest) updateGuestRoom(guest.Guest_ID, null); }}
+                          className="p-2 text-blue-300 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                      </div>
+                    );
+                  }) : (
                     <p className="text-sm text-gray-400 italic py-4 text-center">Room is currently empty</p>
                   )}
                 </div>
@@ -369,8 +316,8 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
                     placeholder="Search unassigned guests..."
                     value={guestSearch}
                     onChange={(e) => setGuestSearch(e.target.value)}
-                    disabled={(selectedRoom.Occupant_Names ? selectedRoom.Occupant_Names.split(',').length : 0) >= (parseInt(selectedRoom.Capacity || '0') || 0)}
-                    className="w-full bg-gray-50 border-none rounded-2xl py-4 pl-12 pr-4 focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100 text-sm font-medium"
+                    disabled={(roomOccupancy[selectedRoom.Room_ID] || []).length >= (parseInt(selectedRoom.Capacity || '0') || 0)}
+                    className="w-full bg-gray-50 border-none rounded-2xl py-4 pl-12 pr-4 focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100 text-sm font-bold"
                   />
                 </div>
                 
@@ -379,7 +326,7 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
                     {unassignedGuests.map(guest => (
                       <button 
                         key={guest.Guest_ID}
-                        onClick={() => addGuestToRoom(guest.Name || '')}
+                        onClick={() => updateGuestRoom(guest.Guest_ID, selectedRoom.Room_ID)}
                         className="w-full text-left px-5 py-4 hover:bg-gray-50 flex items-center justify-between group"
                       >
                         <span className="font-bold text-gray-700">{guest.Name}</span>
@@ -393,10 +340,10 @@ export function RoomGrid({ initialRooms, allGuests }: RoomGridProps) {
             
             <div className="p-8 bg-white border-t border-gray-100">
               <button 
-                onClick={() => setSelectedRoom(null)}
-                className="w-full py-5 bg-gray-900 text-white rounded-[24px] font-black text-lg shadow-xl active:scale-[0.98] transition-all"
+                onClick={() => setSelectedRoomId(null)}
+                className="w-full py-5 bg-gray-900 text-white rounded-[24px] font-black text-lg active:scale-[0.98] transition-all"
               >
-                Done
+                Close Management
               </button>
             </div>
           </div>
