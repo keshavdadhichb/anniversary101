@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchSheetData, updateSheetRow, VehicleTrip } from '@/lib/google-sheets';
+import { fetchSheetData, updateSheetRow, appendSheetRow, VehicleTrip } from '@/lib/google-sheets';
 
 export async function GET() {
   try {
@@ -24,6 +24,20 @@ export async function PUT(request: Request) {
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Failed to update vehicle trip:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const data = await request.json();
+    if (!data || !data.Trip_ID) {
+      return NextResponse.json({ error: 'Missing Trip_ID' }, { status: 400 });
+    }
+    await appendSheetRow('VEHICLES_TRIPS', data);
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('Failed to add vehicle:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

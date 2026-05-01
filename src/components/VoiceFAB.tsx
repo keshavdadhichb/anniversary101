@@ -51,6 +51,11 @@ export function VoiceFAB() {
   }, []);
 
   const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in this browser. Please try Chrome or Edge.');
+      return;
+    }
+
     if (isRecording) {
       recognitionRef.current?.stop();
     } else {
@@ -131,10 +136,6 @@ export function VoiceFAB() {
       setIsProcessing(false);
     }
   };
-
-  if (!recognitionRef.current) {
-    return null; // Speech recognition not supported
-  }
 
   return (
     <>
