@@ -2,7 +2,7 @@
 
 import { useState, useOptimistic, useTransition } from 'react';
 import { VehicleTrip } from '@/lib/google-sheets';
-import { Search, MapPin, User, Clock, Route, IndianRupee, Plus, X } from 'lucide-react';
+import { Search, MapPin, User, Users, Clock, Route, IndianRupee, Plus, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 export function VehicleList({ initialVehicles }: { initialVehicles: VehicleTrip[] }) {
