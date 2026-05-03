@@ -2,7 +2,7 @@
 
 import { useState, useOptimistic, useTransition, useMemo } from 'react';
 import { Guest, Room, VehicleTrip } from '@/lib/google-sheets';
-import { Search, MapPin, Car, Phone, X, Save, ArrowLeft, CheckCircle2, Circle, Clock, Plus, UserPlus, Calendar, User, Info, AlertTriangle, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Search, MapPin, Car, Phone, X, Save, ArrowLeft, CheckCircle2, Circle, Clock, Plus, UserPlus, Calendar, User, Info, AlertTriangle, ShieldCheck, ChevronRight, Users, Plane, Info as InfoIcon, Truck, Building2, Map } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { triggerSync } from '@/lib/sync-util';
@@ -16,12 +16,12 @@ interface GuestListProps {
 
 export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListProps) {
   const [search, setSearch] = useState('');
-  const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
+  const [selectedGuest, setSelectedGuest] = useState<any | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   
-  const [tempPhone, setTempPhone] = useState('');
-  const [isPhoneModified, setIsPhoneModified] = useState(false);
+  const [tempData, setTempData] = useState<any>({});
+  const [isModified, setIsModified] = useState(false);
 
   const [optimisticGuests, addOptimisticGuest] = useOptimistic(
     initialGuests,
@@ -38,17 +38,29 @@ export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListPro
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // Stats for the "Clean Dashboard"
+  const stats = useMemo(() => {
+    return {
+      total: optimisticGuests.length,
+      pending: optimisticGuests.filter(g => g.Status === 'Pending' || !g.Status).length,
+      inTransit: optimisticGuests.filter(g => g.Status === 'In Transit').length,
+      checkedIn: optimisticGuests.filter(g => g.Status === 'Checked-In').length,
+      checkedOut: optimisticGuests.filter(g => g.Status === 'Checked-Out').length,
+    };
+  }, [optimisticGuests]);
+
   const filteredGuests = useMemo(() => {
+    if (!search.trim()) return []; // SHOW ONLY NUMBERS IF NO SEARCH
     return optimisticGuests.filter(g => 
       g.Name?.toLowerCase().includes(search.toLowerCase()) || 
-      g.Phone?.toLowerCase().includes(search.toLowerCase())
+      (g as any).Family_POC?.toLowerCase().includes(search.toLowerCase())
     );
   }, [optimisticGuests, search]);
 
-  const handleOpenProfile = (guest: Guest) => {
+  const handleOpenProfile = (guest: any) => {
     setSelectedGuest(guest);
-    setTempPhone(guest.Phone || '');
-    setIsPhoneModified(false);
+    setTempData({ ...guest });
+    setIsModified(false);
     setIsProfileOpen(true);
   };
 
@@ -77,32 +89,47 @@ export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListPro
     }
   };
 
-  const toggleCheckIn = () => {
+  const saveAllChanges = () => {
     if (!selectedGuest) return;
-    const isCheckedIn = selectedGuest.Status === 'Checked-In';
-    const newStatus = isCheckedIn ? 'Pending' : 'Checked-In';
-    handleUpdateGuest({ Status: newStatus }, isCheckedIn ? 'Check-in undone' : 'Guest checked in successfully!');
+    handleUpdateGuest(tempData, 'All details updated successfully');
+    setIsModified(false);
   };
-
-  // Find assigned details
-  const assignedRoom = useMemo(() => 
-    allRooms.find(r => r.Room_ID === selectedGuest?.Room_ID),
-    [selectedGuest, allRooms]
-  );
-  const assignedVehicle = useMemo(() => 
-    allVehicles.find(v => v.Vehicle_Number === selectedGuest?.Vehicle_ID),
-    [selectedGuest, allVehicles]
-  );
 
   return (
     <div className="relative">
+      {/* CLEAN DASHBOARD STATS */}
+      {!search.trim() && (
+        <div className="grid grid-cols-2 gap-4 mb-8">
+          <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 flex flex-col items-center justify-center space-y-2">
+            <Users className="text-blue-500" size={24} />
+            <p className="text-3xl font-black text-gray-900">{stats.total}</p>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Guests</p>
+          </div>
+          <div className="bg-green-50 p-6 rounded-[32px] shadow-sm border border-green-100 flex flex-col items-center justify-center space-y-2">
+            <ShieldCheck className="text-green-600" size={24} />
+            <p className="text-3xl font-black text-green-900">{stats.checkedIn}</p>
+            <p className="text-[10px] font-black text-green-400 uppercase tracking-widest">Checked In</p>
+          </div>
+          <div className="bg-amber-50 p-6 rounded-[32px] shadow-sm border border-amber-100 flex flex-col items-center justify-center space-y-2">
+            <Truck className="text-amber-600" size={24} />
+            <p className="text-3xl font-black text-amber-900">{stats.inTransit}</p>
+            <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">In Transit</p>
+          </div>
+          <div className="bg-gray-50 p-6 rounded-[32px] shadow-sm border border-gray-100 flex flex-col items-center justify-center space-y-2">
+            <Circle className="text-gray-400" size={24} />
+            <p className="text-3xl font-black text-gray-700">{stats.pending}</p>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Pending</p>
+          </div>
+        </div>
+      )}
+
       {/* Sticky Search & Add Bar */}
       <div className="sticky top-0 z-20 bg-[#F9FAFB]/80 backdrop-blur-md py-3 -mx-4 px-4 flex space-x-2">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
           <input 
             type="text"
-            placeholder="Search name or phone..."
+            placeholder="Search Name or Family POC..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-white border-none rounded-2xl py-4 pl-12 pr-4 shadow-sm ring-1 ring-gray-100 focus:ring-2 focus:ring-blue-600 transition-all text-base font-medium"
@@ -116,14 +143,14 @@ export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListPro
         </button>
       </div>
 
-      {/* Guest List */}
+      {/* SEARCH RESULTS */}
       <div className="mt-4 space-y-3 pb-4">
-        {filteredGuests.length === 0 ? (
+        {search.trim() && filteredGuests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
               <User className="text-gray-300" size={40} />
             </div>
-            <p className="text-gray-500 font-medium">No guests found</p>
+            <p className="text-gray-500 font-medium">No one found with that name</p>
           </div>
         ) : (
           filteredGuests.map(guest => (
@@ -133,27 +160,21 @@ export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListPro
               className="bg-white p-5 rounded-2xl border border-gray-50 shadow-sm active:scale-[0.98] transition-all cursor-pointer flex justify-between items-center group"
             >
               <div className="flex-1">
-                <div className="flex items-center space-x-2 mb-1.5">
+                <div className="flex items-center space-x-2 mb-1">
                   <h3 className="text-lg font-black text-gray-900 leading-tight">
                     {guest.Name}
                   </h3>
-                  {guest.Status === 'Checked-In' && <ShieldCheck size={16} className="text-green-500" />}
+                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
+                    guest.Status === 'Checked-In' ? 'bg-green-100 text-green-700' :
+                    guest.Status === 'In Transit' ? 'bg-amber-100 text-amber-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>
+                    {guest.Status || 'Pending'}
+                  </span>
                 </div>
-                
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                    <MapPin size={12} className="mr-1" />
-                    <span className={guest.Room_ID ? 'text-blue-600' : ''}>
-                      {guest.Room_ID || 'NO ROOM'}
-                    </span>
-                  </div>
-                  <div className="flex items-center text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                    <Car size={12} className="mr-1" />
-                    <span className={guest.Vehicle_ID ? 'text-indigo-600' : ''}>
-                      {guest.Vehicle_ID || 'NO TRIP'}
-                    </span>
-                  </div>
-                </div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center">
+                  <Users size={10} className="mr-1" /> {(guest as any).Family_POC || 'Independent'}
+                </p>
               </div>
               <ChevronRight size={20} className="text-gray-200 group-hover:text-blue-400 transition-colors" />
             </div>
@@ -171,194 +192,155 @@ export function GuestList({ initialGuests, allRooms, allVehicles }: GuestListPro
         />
       )}
 
-      {/* ENHANCED GUEST PROFILE DASHBOARD */}
+      {/* COMPREHENSIVE GUEST PROFILE DASHBOARD */}
       {isProfileOpen && selectedGuest && (
         <div className="fixed inset-0 z-[100] flex justify-end">
-          <div 
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300"
-            onClick={() => setIsProfileOpen(false)}
-          />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setIsProfileOpen(false)} />
           <div className="relative w-full max-w-[480px] bg-[#F9FAFB] h-full flex flex-col shadow-2xl animate-in slide-in-from-right-full duration-500">
-            {/* Modal Header */}
-            <div className="px-6 py-6 bg-white border-b border-gray-100 flex items-center h-24 shadow-sm">
-              <button 
-                onClick={() => setIsProfileOpen(false)}
-                className="p-3 -ml-2 rounded-2xl hover:bg-gray-50 text-gray-400 transition-colors"
-              >
-                <ArrowLeft size={24} />
-              </button>
+            {/* Header */}
+            <div className="px-6 py-6 bg-white border-b border-gray-100 flex items-center h-24 shadow-sm sticky top-0 z-10">
+              <button onClick={() => setIsProfileOpen(false)} className="p-3 -ml-2 rounded-2xl hover:bg-gray-50 text-gray-400"><ArrowLeft size={24} /></button>
               <div className="ml-3">
-                <h2 className="text-2xl font-black text-gray-900 leading-none">
-                  {selectedGuest.Name}
-                </h2>
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1.5">Guest Profile Dashboard</p>
+                <h2 className="text-2xl font-black text-gray-900 leading-none">{selectedGuest.Name}</h2>
+                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1.5 flex items-center"><Users size={10} className="mr-1" /> Family: {(selectedGuest as any).Family_POC}</p>
               </div>
-              <button 
-                onClick={() => setIsProfileOpen(false)}
-                className="ml-auto p-3 rounded-2xl bg-gray-50 text-gray-400"
-              >
-                <X size={24} />
-              </button>
+              <button onClick={() => setIsProfileOpen(false)} className="ml-auto p-3 rounded-2xl bg-gray-50 text-gray-400"><X size={24} /></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-40">
-              {/* PRIMARY STATUS & CONTACT */}
-              <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 flex justify-between items-center">
-                <div className="space-y-4 flex-1">
+            <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-40">
+              {/* SECTION: PERSONAL & STATUS */}
+              <section className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-6">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2 flex items-center"><User size={12} className="mr-2" /> Personal & Status</h4>
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Check-In Status</h4>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Status</label>
                     <select 
-                      value={selectedGuest.Status || 'Pending'}
-                      onChange={(e) => handleUpdateGuest({ Status: e.target.value }, `Status updated to ${e.target.value}`)}
-                      className={`px-4 py-2 rounded-full font-black text-xs uppercase tracking-widest border-none ring-1 appearance-none outline-none ${
-                        selectedGuest.Status === 'Checked-In' 
-                          ? 'bg-green-50 text-green-700 ring-green-100' 
-                          : 'bg-amber-50 text-amber-700 ring-amber-100'
-                      }`}
+                      value={tempData.Status || 'Pending'}
+                      onChange={(e) => { setTempData({...tempData, Status: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-black text-xs appearance-none ring-1 ring-gray-100"
                     >
                       <option value="Pending">Pending</option>
+                      <option value="In Transit">In Transit</option>
                       <option value="Checked-In">Checked-In</option>
+                      <option value="Checked-Out">Checked-Out</option>
                     </select>
                   </div>
                   <div>
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Phone Number</h4>
-                    <div className="flex space-x-2">
-                      <div className="relative flex-1">
-                        <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input 
-                          type="tel"
-                          value={tempPhone}
-                          onChange={(e) => { setTempPhone(e.target.value); setIsPhoneModified(true); }}
-                          className="w-full bg-gray-50 border-none rounded-xl py-2.5 pl-9 pr-4 font-bold text-sm"
-                        />
-                      </div>
-                      {isPhoneModified && (
-                        <button onClick={() => { handleUpdateGuest({ Phone: tempPhone }, 'Updated'); setIsPhoneModified(false); }} className="bg-blue-600 text-white px-3 rounded-xl shadow-lg shadow-blue-100"><Save size={16} /></button>
-                      )}
-                    </div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Phone</label>
+                    <input 
+                      type="tel"
+                      value={tempData.Phone || ''}
+                      onChange={(e) => { setTempData({...tempData, Phone: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                      placeholder="Add Phone"
+                    />
                   </div>
                 </div>
-              </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Family POC</label>
+                  <input 
+                    type="text"
+                    value={tempData.Family_POC || ''}
+                    onChange={(e) => { setTempData({...tempData, Family_POC: e.target.value}); setIsModified(true); }}
+                    className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                  />
+                </div>
+              </section>
 
-              {/* LOGISTICS: ROOM ASSIGNMENT */}
-              <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-4">
-                <div className="flex items-center text-blue-600 font-black text-[10px] uppercase tracking-widest">
-                  <MapPin size={14} className="mr-2" /> Accommodation details
-                </div>
-                {assignedRoom ? (
-                  <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100/50 flex justify-between items-center">
-                    <div>
-                      <p className="text-xl font-black text-blue-900">Room {assignedRoom.Room_ID}</p>
-                      <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mt-0.5">{assignedRoom.Location}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-black text-blue-400 uppercase">Capacity</p>
-                      <p className="text-sm font-black text-blue-700">{assignedRoom.Capacity} People</p>
-                    </div>
+              {/* SECTION: TRAVEL DETAILS */}
+              <section className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-6">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2 flex items-center"><Plane size={12} className="mr-2" /> Travel Details</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Origin</label>
+                    <input 
+                      type="text"
+                      value={tempData.Origin || ''}
+                      onChange={(e) => { setTempData({...tempData, Origin: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                    />
                   </div>
-                ) : (
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-dashed border-gray-200 text-center">
-                    <p className="text-xs font-bold text-gray-400 uppercase">No Room Assigned Yet</p>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Root No.</label>
+                    <select 
+                      value={tempData.Root_Number || ''}
+                      onChange={(e) => { setTempData({...tempData, Root_Number: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                    >
+                      <option value="">None</option>
+                      {allVehicles.map(v => <option key={v.Trip_ID} value={v.Trip_ID}>Root {v.Trip_ID} ({v.Vehicle_Number})</option>)}
+                    </select>
                   </div>
-                )}
-                <div className="pt-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase block mb-2">Change Assignment</label>
-                  <select 
-                    value={selectedGuest.Room_ID || ''}
-                    onChange={(e) => handleUpdateGuest({ Room_ID: e.target.value }, `Moved to Room ${e.target.value}`)}
-                    className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 font-black text-sm appearance-none ring-1 ring-gray-100"
-                  >
-                    <option value="">Select a Room</option>
-                    {allRooms.map(room => (
-                      <option key={room.Room_ID} value={room.Room_ID}>{room.Room_ID} - {room.Location}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* LOGISTICS: VEHICLE ASSIGNMENT */}
-              <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-4">
-                <div className="flex items-center text-indigo-600 font-black text-[10px] uppercase tracking-widest">
-                  <Car size={14} className="mr-2" /> Transport details
-                </div>
-                {assignedVehicle ? (
-                  <div className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100/50 space-y-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-xl font-black text-indigo-900">{assignedVehicle.Vehicle_Number}</p>
-                        <p className="text-xs font-bold text-indigo-600 uppercase tracking-widest mt-0.5">{assignedVehicle.Driver_Name || 'Driver N/A'}</p>
-                      </div>
-                      {assignedVehicle.Driver_Phone && (
-                        <a href={`tel:${assignedVehicle.Driver_Phone}`} className="p-3 bg-white text-indigo-600 rounded-xl shadow-sm"><Phone size={18} /></a>
-                      )}
-                    </div>
-                    <div className="flex items-center text-[10px] font-black text-indigo-400 uppercase space-x-4">
-                      <span className="flex items-center"><Clock size={12} className="mr-1" /> {assignedVehicle.Depart_Time || '--:--'}</span>
-                      <span className="flex items-center"><MapPin size={12} className="mr-1" /> {assignedVehicle.To_Location || 'Destination TBD'}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-dashed border-gray-200 text-center">
-                    <p className="text-xs font-bold text-gray-400 uppercase">No Vehicle Assigned Yet</p>
-                  </div>
-                )}
-                <div className="pt-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase block mb-2">Change Assignment</label>
-                  <select 
-                    value={selectedGuest.Vehicle_ID || ''}
-                    onChange={(e) => handleUpdateGuest({ Vehicle_ID: e.target.value }, `Assigned to ${e.target.value}`)}
-                    className="w-full bg-gray-50 border-none rounded-xl py-4 px-4 font-black text-sm appearance-none ring-1 ring-gray-100"
-                  >
-                    <option value="">Select a Vehicle</option>
-                    {allVehicles.map(v => (
-                      <option key={v.Trip_ID} value={v.Vehicle_Number}>{v.Vehicle_Number} ({v.Driver_Name})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* TRAVEL ITINERARY */}
-              <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-4">
-                <div className="flex items-center text-rose-600 font-black text-[10px] uppercase tracking-widest">
-                  <Clock size={14} className="mr-2" /> Travel schedule
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-4 rounded-2xl ring-1 ring-gray-100">
-                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Arrival</label>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Arrival Time</label>
                     <input 
                       type="text"
-                      defaultValue={selectedGuest.Arrival_Time}
-                      onBlur={(e) => handleUpdateGuest({ Arrival_Time: e.target.value }, 'Arrival updated')}
-                      className="bg-transparent border-none w-full font-black text-gray-700 text-sm outline-none"
+                      value={tempData.Arrival_Time || ''}
+                      onChange={(e) => { setTempData({...tempData, Arrival_Time: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
                     />
                   </div>
-                  <div className="bg-gray-50 p-4 rounded-2xl ring-1 ring-gray-100">
-                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Departure</label>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Depart Time</label>
                     <input 
                       type="text"
-                      defaultValue={selectedGuest.Depart_Time}
-                      onBlur={(e) => handleUpdateGuest({ Depart_Time: e.target.value }, 'Departure updated')}
-                      className="bg-transparent border-none w-full font-black text-gray-700 text-sm outline-none"
+                      value={tempData.Depart_Time || ''}
+                      onChange={(e) => { setTempData({...tempData, Depart_Time: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
                     />
                   </div>
                 </div>
-              </div>
+              </section>
+
+              {/* SECTION: STAY DETAILS */}
+              <section className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-50 space-y-6">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2 flex items-center"><Building2 size={12} className="mr-2" /> Stay Details</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Hotel</label>
+                    <input 
+                      type="text"
+                      value={tempData.Hotel || ''}
+                      onChange={(e) => { setTempData({...tempData, Hotel: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Room No.</label>
+                    <select 
+                      value={tempData.Room_ID || ''}
+                      onChange={(e) => { setTempData({...tempData, Room_ID: e.target.value}); setIsModified(true); }}
+                      className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100"
+                    >
+                      <option value="">Unassigned</option>
+                      {allRooms.map(r => <option key={r.Room_ID} value={r.Room_ID}>{r.Room_ID} ({r.Location})</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-300 uppercase block mb-1">Remarks</label>
+                  <textarea 
+                    value={tempData.Remarks || ''}
+                    onChange={(e) => { setTempData({...tempData, Remarks: e.target.value}); setIsModified(true); }}
+                    className="w-full bg-gray-50 border-none rounded-xl py-3 px-3 font-bold text-xs ring-1 ring-gray-100 h-20"
+                  />
+                </div>
+              </section>
             </div>
 
-            {/* QUICK ACTIONS FOOTER */}
-            <div className="absolute bottom-0 left-0 right-0 p-8 bg-white border-t border-gray-100 shadow-xl flex space-x-3">
-              <button 
-                onClick={toggleCheckIn}
-                disabled={isPending}
-                className={`flex-1 py-5 rounded-[24px] font-black text-lg transition-all active:scale-[0.98] ${
-                  selectedGuest.Status === 'Checked-In'
-                    ? 'bg-red-50 text-red-500 border-2 border-red-100'
-                    : 'bg-green-600 text-white shadow-xl shadow-green-100'
-                }`}
-              >
-                {selectedGuest.Status === 'Checked-In' ? 'UNDO CHECK-IN' : 'CHECK-IN NOW'}
-              </button>
-            </div>
+            {/* SAVE BUTTON */}
+            {isModified && (
+              <div className="absolute bottom-0 left-0 right-0 p-8 bg-white border-t border-gray-100 shadow-2xl animate-in slide-in-from-bottom-full">
+                <button 
+                  onClick={saveAllChanges}
+                  className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black text-xl shadow-xl shadow-blue-100 active:scale-95 transition-all flex items-center justify-center"
+                >
+                  <Save size={24} className="mr-3" /> Save All Changes
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
