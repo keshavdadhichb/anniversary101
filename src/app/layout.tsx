@@ -9,8 +9,16 @@ import { Toaster } from 'react-hot-toast';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Anniversary Logistics',
+  title: 'Anniversary 101',
   description: 'Mobile-first logistics application',
+  manifest: '/manifest.json',
+  themeColor: '#2563EB',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Anniversary 101',
+  },
+  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover',
 };
 
 export default function RootLayout({

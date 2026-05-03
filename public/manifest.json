@@ -1,0 +1,17 @@
+{
+  "name": "Anniversary 101",
+  "short_name": "Anniversary",
+  "description": "Logistics and Guest Management for Vrindavan",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F9FAFB",
+  "theme_color": "#2563EB",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
