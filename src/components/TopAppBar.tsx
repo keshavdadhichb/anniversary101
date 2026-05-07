@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { RefreshCw, Download, X, Share } from 'lucide-react';
+import { RefreshCw, Download, X, Share, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 export function TopAppBar() {
