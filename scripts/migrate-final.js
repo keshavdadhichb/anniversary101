@@ -19,25 +19,34 @@ async function getSheets() {
 
 function formatExcelValue(val) {
   if (val === undefined || val === null) return '';
-  // If it looks like a date (number > 40000 and < 50000)
+  
+  // Handle Excel Serial Dates
   if (typeof val === 'number' && val > 40000 && val < 50000) {
     const date = XLSX.SSF.parse_date_code(val);
     return `${date.d.toString().padStart(2, '0')}.${date.m.toString().padStart(2, '0')}.${date.y}`;
   }
-  // If it's a fractional number (likely time)
+
+  // Handle Fractional Times (0 to 1)
   if (typeof val === 'number' && val > 0 && val < 1) {
     const time = XLSX.SSF.parse_date_code(val);
     return `${time.H.toString().padStart(2, '0')}:${time.M.toString().padStart(2, '0')}`;
   }
+
+  // Handle Decimal Times (e.g., 14.3 -> 14:30)
+  if (typeof val === 'number' && val >= 1 && val < 25) {
+    const hours = Math.floor(val);
+    const mins = Math.round((val - hours) * 100);
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  }
+
   return val.toString().trim();
 }
 
 async function migrate() {
-  console.log('🚀 Starting FINAL Vrindavan Migration (Precise Sync)...');
+  console.log('🚀 Starting FINAL Vrindavan Migration (Time Fix)...');
   const workbook = XLSX.readFile('VRINDAVAN-FINAL.xlsx');
   const sheets = await getSheets();
 
-  // 1. Build Phone Map from Hotel-specific sheets
   const phoneMap = new Map();
   ['KAMLA PLACE', 'MANSIGA'].forEach(sheetName => {
     const data = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
@@ -58,7 +67,6 @@ async function migrate() {
     }
   });
 
-  // 2. Parse FINAL ROOM LIST
   const masterSheet = workbook.Sheets['FINAL ROOM LIST'];
   const masterData = XLSX.utils.sheet_to_json(masterSheet, { header: 1 });
   
@@ -97,7 +105,6 @@ async function migrate() {
     }
   }
 
-  // 3. Parse FINAL (Trips)
   const finalSheet = workbook.Sheets['FINAL'];
   const finalData = XLSX.utils.sheet_to_json(finalSheet, { header: 1 });
   
@@ -132,7 +139,6 @@ async function migrate() {
     }
   }
 
-  // 4. Update Google Sheets
   const schemas = {
     GUESTS: ['Guest_ID', 'Name', 'Phone', 'Status', 'Family_POC', 'Origin', 'Hotel', 'Room_ID', 'Vehicle_ID', 'Root_Number', 'Arrival_Time', 'Depart_Time', 'Remarks'],
     ROOMS: ['Room_ID', 'Location', 'Capacity', 'Status'],
@@ -157,7 +163,7 @@ async function migrate() {
     });
   }
 
-  console.log('✅ Precise Migration Finished Successfully!');
+  console.log('✅ Time Fix Migration Finished Successfully!');
 }
 
 migrate().catch(console.error);

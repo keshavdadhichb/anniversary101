@@ -114,10 +114,39 @@ Warm Regards,
     icon: <Clock size={18} />
   },
   {
+    id: 'quick_update',
+    name: 'Quick Update',
+    text: `*!! Radhe Radhe !!*
+
+Hi {{name}}! 
+
+Just a quick update for the family:
+[TYPE YOUR MESSAGE HERE]
+
+Best,
+Sunthwal Family`,
+    icon: <Info size={18} />
+  },
+  {
+    id: 'checkout_reminder',
+    name: 'Checkout Reminder',
+    text: `*!! Radhe Radhe !!*
+
+Hi {{name}}! 
+
+We hope you're having a wonderful time in Vrindavan. 🌸
+
+A gentle reminder that your check-out at *{{hotel}}* is scheduled for tomorrow. Please ensure your luggage is ready and you have all your belongings.
+
+Safe travels ahead!
+Sunthwal Family`,
+    icon: <Clock size={18} />
+  },
+  {
     id: 'custom',
     name: 'Custom Message',
     text: "Hi {{name}}! ",
-    icon: <Info size={18} />
+    icon: <MessageSquare size={18} />
   }
 ];
 
