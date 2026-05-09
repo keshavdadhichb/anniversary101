@@ -16,6 +16,7 @@ export function TopAppBar() {
     if (pathname.includes('/guests')) return 'Guest Directory';
     if (pathname.includes('/rooms')) return 'Room Grid';
     if (pathname.includes('/vehicles')) return 'Fleet Dashboard';
+    if (pathname.includes('/broadcast')) return 'Broadcast Center';
     return 'Anniversary 101';
   };
 

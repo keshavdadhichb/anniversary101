@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Users, BedDouble, Car } from 'lucide-react';
+import { Users, BedDouble, Car, MessageSquare } from 'lucide-react';
 
 export function BottomNav() {
   const pathname = usePathname();
@@ -11,6 +11,7 @@ export function BottomNav() {
     { name: 'Guests', path: '/guests', icon: Users },
     { name: 'Rooms', path: '/rooms', icon: BedDouble },
     { name: 'Vehicles', path: '/vehicles', icon: Car },
+    { name: 'Broadcast', path: '/broadcast', icon: MessageSquare },
   ];
 
   return (
