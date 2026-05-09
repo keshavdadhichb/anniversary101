@@ -10,6 +10,49 @@ interface BroadcastViewProps {
 }
 const TEMPLATES = [
   {
+    id: 'itinerary_en',
+    name: 'English Itinerary',
+    text: `*!! Radhe Radhe !!*
+
+*Greetings {{name}} Family,*
+
+*📍 Stay Details:*
+• *Hotel:* {{hotel}}
+• *Check-in:* {{checkin}}
+• *Room No.:* {{room}}
+• *Note:* Please bring your original Aadhaar Card/ID for check-in.
+
+---
+*🗓️ Event Schedule:*
+
+*May 10:* Bhajan @ New Home - 9:00 PM
+*May 11:* Hawan & Grah Pravesh - 7:30 AM onwards
+*May 11:* Sangeet & Bhajan Sandhya @ Mansingha - 11:30 AM & 9:00 PM
+*May 12:* Temple Darshan - 7:30 AM
+*May 12:* Family Function & Anniversary Reception - 11:00 AM & 7:30 PM
+
+*Special Events:*
+*Govardhan Parikrama:* May 13, 12:30 AM (Contact: Mayank - 98281 30058)
+*Premanand Ji Darshan:* Contact Anshu Sharma - 94560 55903
+
+---
+*🍴 Meal Timings (Mansingha Place):*
+• Breakfast: 7:30 - 10:30 AM
+• Lunch: 12:30 - 3:00 PM
+• Hi-Tea: 4:00 - 5:00 PM
+• Dinner: 8:00 - 10:30 PM
+
+---
+*📞 For Assistance:*
+• Transport: 99943 10384
+• Refreshments: 97699 70955
+• Room Allotment: 80724 64078
+
+Warm Regards,
+*Sunthwal Family (Ladnun)*`,
+    icon: <Users size={18} />
+  },
+  {
     id: 'itinerary_hindi',
     name: 'Hindi Itinerary',
     text: `*!! राधे राधे !!*
@@ -85,11 +128,19 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
   const [statusFilter, setStatusFilter] = useState('All');
 
   const filteredGuests = useMemo(() => {
+    const testNumbers = ['7708186715', '9952390715', '9952430715'];
+    
     return guests.filter(g => {
+      const cleanPhone = g.Phone?.replace(/\D/g, '') || '';
       const matchesSearch = g.Name.toLowerCase().includes(search.toLowerCase()) || 
                            (g as any).Family_POC?.toLowerCase().includes(search.toLowerCase());
+      
+      if (statusFilter === 'Test') {
+        return testNumbers.some(tn => cleanPhone.includes(tn));
+      }
+
       const matchesStatus = statusFilter === 'All' || g.Status === statusFilter;
-      return matchesSearch && matchesStatus && g.Phone; // Only guests with phone numbers
+      return matchesSearch && matchesStatus && g.Phone;
     });
   }, [guests, search, statusFilter]);
 
@@ -176,7 +227,8 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="bg-white border-none rounded-2xl px-4 py-4 shadow-sm text-xs font-black uppercase appearance-none"
           >
-            <option value="All">All</option>
+            <option value="All">All Guests</option>
+            <option value="Test">⚠️ Test Numbers</option>
             <option value="Pending">Pending</option>
             <option value="In Transit">In Transit</option>
             <option value="Checked-In">In Hotel</option>
