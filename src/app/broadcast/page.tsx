@@ -1,8 +1,16 @@
-import { getGuests } from '@/lib/google-sheets';
+import { fetchSheetData, Guest } from '@/lib/google-sheets';
 import BroadcastView from './BroadcastView';
 
+export const revalidate = 0;
+
 export default async function BroadcastPage() {
-  const guests = await getGuests();
+  let guests: Guest[] = [];
+  
+  try {
+    guests = await fetchSheetData<Guest>('GUESTS');
+  } catch (e) {
+    console.error('Failed to fetch guests for broadcast:', e);
+  }
 
   return (
     <div className="max-w-[480px] mx-auto pt-4">
