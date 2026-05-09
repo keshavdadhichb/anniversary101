@@ -133,7 +133,7 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
     return guests.filter(g => {
       const cleanPhone = g.Phone?.replace(/\D/g, '') || '';
       const matchesSearch = g.Name.toLowerCase().includes(search.toLowerCase()) || 
-                           (g as any).Family_POC?.toLowerCase().includes(search.toLowerCase());
+                           g.Family_POC?.toLowerCase().includes(search.toLowerCase());
       
       if (statusFilter === 'Test') {
         return testNumbers.some(tn => cleanPhone.includes(tn));
@@ -157,7 +157,7 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
       .replace(/{{room}}/g, guest.Room_ID || 'TBD')
       .replace(/{{hotel}}/g, guest.Hotel || 'TBD')
       .replace(/{{checkin}}/g, guest.Arrival_Time || 'TBD')
-      .replace(/{{root}}/g, (guest as any).Root_Number || 'TBD')
+      .replace(/{{root}}/g, guest.Root_Number || 'TBD')
       .replace(/{{vehicle}}/g, guest.Vehicle_ID || 'TBD')
       .replace(/{{time}}/g, guest.Arrival_Time || 'TBD')
       .replace(/{{from}}/g, guest.Origin || 'TBD');
@@ -249,7 +249,7 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
                 </div>
                 <div>
                   <h4 className="text-sm font-black text-gray-900">{guest.Name}</h4>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{(guest as any).Family_POC} • {guest.Phone}</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{guest.Family_POC} • {guest.Phone}</p>
                 </div>
               </div>
               <button

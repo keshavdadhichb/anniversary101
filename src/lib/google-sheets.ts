@@ -29,11 +29,16 @@ export type Guest = {
   Guest_ID: string;
   Name: string;
   Phone: string;
-  Arrival_Time: string;
-  Depart_Time: string;
+  Status: string;
+  Family_POC: string;
+  Origin: string;
+  Hotel: string;
   Room_ID: string;
   Vehicle_ID: string;
-  Status: string;
+  Root_Number: string;
+  Arrival_Time: string;
+  Depart_Time: string;
+  Remarks: string;
 };
 
 export type Room = {
