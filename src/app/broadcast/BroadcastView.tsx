@@ -8,8 +8,50 @@ import toast from 'react-hot-toast';
 interface BroadcastViewProps {
   guests: Guest[];
 }
-
 const TEMPLATES = [
+  {
+    id: 'itinerary_hindi',
+    name: 'Hindi Itinerary',
+    text: `*!! राधे राधे !!*
+
+*नमस्ते {{name}} परिवार,*
+
+*📍 आपके स्टे की जानकारी:*
+• *होटल:* {{hotel}}
+• *चेक-इन:* {{checkin}}
+• *कमरा नंबर:* {{room}}
+• *नोट:* कृपया चेक-इन के लिए अपना मूल आधार कार्ड/ID साथ लाएं।
+
+---
+*🗓️ कार्यक्रम विवरण:*
+
+*10 मई:* भजन (नया घर) - रात 9:00 बजे
+*11 मई:* हवन और गृह प्रवेश - सुबह 7:30 बजे
+*11 मई:* संगीत और भजन संध्या (मानसिंहका) - सुबह 11:30 और रात 9:00 बजे
+*12 मई:* मंदिर दर्शन - सुबह 7:30 बजे
+*12 मई:* अपनों का सम्मान और एनिवर्सरी रिसेप्शन - सुबह 11:00 और शाम 7:30 बजे
+
+*विशेष कार्यक्रम:*
+*गोवर्धन परिक्रमा:* 13 मई, रात 12:30 बजे (संपर्क: मयंक - 98281 30058)
+*प्रेमानंद जी दर्शन:* (सीमित सीटें) संपर्क: अंशु शर्मा - 94560 55903
+
+---
+*🍴 भोजन का समय (Mansingha Place):*
+• नाश्ता: 7:30 - 10:30 AM
+• लंच: 12:30 - 3:00 PM
+• चाय: 4:00 - 5:00 PM
+• डिनर: 8:00 - 10:30 PM
+
+---
+*📞 सहायता के लिए:*
+• ट्रांसपोर्ट: 99943 10384
+• रिफ्रेशमेंट: 97699 70955
+• रूम अलॉटमेंट: 80724 64078
+
+सादर,
+*सुंथवाल परिवार (लाडनूं)*`,
+    icon: <Users size={18} />
+  },
   {
     id: 'welcome',
     name: 'Welcome Message',
@@ -52,8 +94,15 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
   }, [guests, search, statusFilter]);
 
   const personalizeMessage = (template: string, guest: Guest) => {
+    // Find all family members in the same room to list them
+    const familyMembers = guests
+      .filter(g => g.Room_ID === guest.Room_ID && g.Hotel === guest.Hotel)
+      .map(g => g.Name)
+      .join('\n');
+
     return template
       .replace(/{{name}}/g, guest.Name || '')
+      .replace(/{{family_members}}/g, familyMembers)
       .replace(/{{room}}/g, guest.Room_ID || 'TBD')
       .replace(/{{hotel}}/g, guest.Hotel || 'TBD')
       .replace(/{{checkin}}/g, guest.Arrival_Time || 'TBD')
@@ -105,7 +154,7 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
             onChange={(e) => setCustomText(e.target.value)}
             className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold text-gray-700 h-32 focus:ring-2 focus:ring-blue-600"
           />
-          <p className="text-[10px] font-medium text-gray-400">Available: {"{{name}}, {{room}}, {{hotel}}, {{root}}, {{vehicle}}, {{time}}, {{from}}"}</p>
+          <p className="text-[10px] font-medium text-gray-400">Available: {"{{name}}, {{family_members}}, {{room}}, {{hotel}}, {{root}}, {{vehicle}}, {{time}}, {{from}}"}</p>
         </div>
       </div>
 
