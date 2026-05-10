@@ -2,8 +2,9 @@
 
 import { useState, useMemo } from 'react';
 import { Guest } from '@/lib/google-sheets';
-import { Send, MessageSquare, Users, CheckCircle, Clock, Search, MessageCircle, X, Info, Layout, ChevronRight, User } from 'lucide-react';
+import { Send, MessageSquare, Users, CheckCircle, Clock, Search, MessageCircle, X, Info, Layout, ChevronRight, User, Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { CopyToClipboard } from 'react-copy-to-clipboard';
 
 interface BroadcastViewProps {
   guests: Guest[];
@@ -155,6 +156,7 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
   const [customText, setCustomText] = useState(TEMPLATES[0].text);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [sentGuests, setSentGuests] = useState<string[]>([]);
 
   const filteredGuests = useMemo(() => {
     const testNumbers = ['7708186715', '9952390715', '9952430715'];
@@ -198,11 +200,25 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
       return;
     }
     const message = personalizeMessage(customText, guest);
+    
+    // Mark as sent
+    if (!sentGuests.includes(guest.Guest_ID)) {
+      setSentGuests([...sentGuests, guest.Guest_ID]);
+    }
+
     // Clean phone number (remove spaces, +, etc.)
     const cleanPhone = guest.Phone.replace(/\D/g, '');
     const waPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
     const url = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
+  };
+
+  const handleCopy = (guest: Guest) => {
+    const message = personalizeMessage(customText, guest);
+    toast.success(`Message for ${guest.Name} copied!`);
+    if (!sentGuests.includes(guest.Guest_ID)) {
+      setSentGuests([...sentGuests, guest.Guest_ID]);
+    }
   };
 
   return (
@@ -270,26 +286,36 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
               {filteredGuests.length} Guests ready to broadcast
             </p>
           </div>
-          {filteredGuests.length > 0 ? filteredGuests.map(guest => (
-            <div key={guest.Guest_ID} className="p-4 flex items-center justify-between group">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
-                  <User size={18} />
+          {filteredGuests.length > 0 ? filteredGuests.map(guest => {
+            const isSent = sentGuests.includes(guest.Guest_ID);
+            return (
+              <div key={guest.Guest_ID} className={`p-4 flex items-center justify-between group transition-colors ${isSent ? 'bg-gray-50/50 grayscale-[0.5]' : 'bg-white'}`}>
+                <div className="flex items-center space-x-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isSent ? 'bg-green-100 text-green-600' : 'bg-gray-50 text-gray-400'}`}>
+                    {isSent ? <CheckCircle size={18} /> : <User size={18} />}
+                  </div>
+                  <div>
+                    <h4 className={`text-sm font-black transition-colors ${isSent ? 'text-gray-400' : 'text-gray-900'}`}>{guest.Name}</h4>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{guest.Family_POC} • {guest.Phone}</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-sm font-black text-gray-900">{guest.Name}</h4>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{guest.Family_POC} • {guest.Phone}</p>
+                <div className="flex items-center space-x-2">
+                  <CopyToClipboard text={personalizeMessage(customText, guest)} onCopy={() => handleCopy(guest)}>
+                    <button className="p-3 rounded-2xl bg-gray-100 text-gray-500 hover:bg-gray-200 active:scale-95 transition-all">
+                      <Copy size={18} />
+                    </button>
+                  </CopyToClipboard>
+                  <button
+                    onClick={() => handleSend(guest)}
+                    className={`${isSent ? 'bg-gray-200 text-gray-500' : 'bg-green-500 text-white shadow-lg shadow-green-100'} p-3 rounded-2xl active:scale-90 transition-all flex items-center space-x-2`}
+                  >
+                    <MessageCircle size={18} />
+                    <span className="text-[10px] font-black uppercase hidden sm:inline">{isSent ? 'Sent' : 'Send'}</span>
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={() => handleSend(guest)}
-                className="bg-green-500 text-white p-3 rounded-2xl shadow-lg shadow-green-100 active:scale-90 transition-all flex items-center space-x-2"
-              >
-                <MessageCircle size={18} />
-                <span className="text-[10px] font-black uppercase hidden sm:inline">Send</span>
-              </button>
-            </div>
-          )) : (
+            );
+          }) : (
             <div className="py-20 text-center space-y-4">
               <Users size={40} className="mx-auto text-gray-100" />
               <p className="text-gray-400 font-bold">No guests with phone numbers found</p>

@@ -29,14 +29,19 @@ function formatExcelValue(val) {
   // Handle Fractional Times (0 to 1)
   if (typeof val === 'number' && val > 0 && val < 1) {
     const time = XLSX.SSF.parse_date_code(val);
-    return `${time.H.toString().padStart(2, '0')}:${time.M.toString().padStart(2, '0')}`;
+    const ampm = time.H >= 12 ? 'PM' : 'AM';
+    const h12 = time.H % 12 || 12;
+    return `${h12.toString().padStart(2, '0')}:${time.M.toString().padStart(2, '0')} ${ampm}`;
   }
 
-  // Handle Decimal Times (e.g., 14.3 -> 14:30)
+  // Handle Decimal Times (e.g., 14.3 -> 02:30 PM)
   if (typeof val === 'number' && val >= 1 && val < 25) {
     const hours = Math.floor(val);
     const mins = Math.round((val - hours) * 100);
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const h12 = hours % 12 || 12;
+    const cleanMins = mins >= 60 ? '00' : mins.toString().padStart(2, '0');
+    return `${h12.toString().padStart(2, '0')}:${cleanMins} ${ampm}`;
   }
 
   return val.toString().trim();
