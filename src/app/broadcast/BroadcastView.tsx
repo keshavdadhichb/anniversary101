@@ -5,7 +5,6 @@ import { Guest } from '@/lib/google-sheets';
 import { Send, MessageSquare, Users, CheckCircle, Clock, Search, MessageCircle, X, Info, Layout, ChevronRight, User, Copy, Check, Plus, Pencil, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
-import axios from 'axios';
 
 interface BroadcastViewProps {
   guests: Guest[];
@@ -231,10 +230,17 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
     if (!editPhoneValue) return;
     setIsUpdating(true);
     try {
-      await axios.put('/api/guests', {
-        id: guest.Guest_ID,
-        updates: { Phone: editPhoneValue }
+      const response = await fetch('/api/guests', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: guest.Guest_ID,
+          updates: { Phone: editPhoneValue }
+        })
       });
+
+      if (!response.ok) throw new Error('Update failed');
+
       // Update local state (optimistic)
       guest.Phone = editPhoneValue;
       setEditingGuestId(null);
