@@ -2,9 +2,10 @@
 
 import { useState, useMemo } from 'react';
 import { Guest } from '@/lib/google-sheets';
-import { Send, MessageSquare, Users, CheckCircle, Clock, Search, MessageCircle, X, Info, Layout, ChevronRight, User, Copy, Check } from 'lucide-react';
+import { Send, MessageSquare, Users, CheckCircle, Clock, Search, MessageCircle, X, Info, Layout, ChevronRight, User, Copy, Check, Plus, Pencil, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
+import axios from 'axios';
 
 interface BroadcastViewProps {
   guests: Guest[];
@@ -157,6 +158,9 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [sentGuests, setSentGuests] = useState<string[]>([]);
+  const [editingGuestId, setEditingGuestId] = useState<string | null>(null);
+  const [editPhoneValue, setEditPhoneValue] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const filteredGuests = useMemo(() => {
     const testNumbers = ['7708186715', '9952390715', '9952430715'];
@@ -171,7 +175,9 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
       }
 
       const matchesStatus = statusFilter === 'All' || g.Status === statusFilter;
-      return matchesSearch && matchesStatus && g.Phone;
+      // Show guests even if they don't have a phone number if searching
+      const hasPhone = !!g.Phone;
+      return matchesSearch && matchesStatus && (search.length > 0 || hasPhone);
     });
   }, [guests, search, statusFilter]);
 
@@ -218,6 +224,26 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
     toast.success(`Message for ${guest.Name} copied!`);
     if (!sentGuests.includes(guest.Guest_ID)) {
       setSentGuests([...sentGuests, guest.Guest_ID]);
+    }
+  };
+
+  const handleUpdatePhone = async (guest: Guest) => {
+    if (!editPhoneValue) return;
+    setIsUpdating(true);
+    try {
+      await axios.put('/api/guests', {
+        id: guest.Guest_ID,
+        updates: { Phone: editPhoneValue }
+      });
+      // Update local state (optimistic)
+      guest.Phone = editPhoneValue;
+      setEditingGuestId(null);
+      setEditPhoneValue('');
+      toast.success(`Phone updated for ${guest.Name}`);
+    } catch (error) {
+      toast.error('Failed to update phone number');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -288,30 +314,73 @@ export default function BroadcastView({ guests }: BroadcastViewProps) {
           </div>
           {filteredGuests.length > 0 ? filteredGuests.map(guest => {
             const isSent = sentGuests.includes(guest.Guest_ID);
+            const isEditing = editingGuestId === guest.Guest_ID;
+
             return (
               <div key={guest.Guest_ID} className={`p-4 flex items-center justify-between group transition-colors ${isSent ? 'bg-gray-50/50 grayscale-[0.5]' : 'bg-white'}`}>
-                <div className="flex items-center space-x-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isSent ? 'bg-green-100 text-green-600' : 'bg-gray-50 text-gray-400'}`}>
+                <div className="flex items-center space-x-3 flex-1 overflow-hidden">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 ${isSent ? 'bg-green-100 text-green-600' : 'bg-gray-50 text-gray-400'}`}>
                     {isSent ? <CheckCircle size={18} /> : <User size={18} />}
                   </div>
-                  <div>
-                    <h4 className={`text-sm font-black transition-colors ${isSent ? 'text-gray-400' : 'text-gray-900'}`}>{guest.Name}</h4>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{guest.Family_POC} • {guest.Phone}</p>
+                  <div className="flex-1 overflow-hidden">
+                    <h4 className={`text-sm font-black transition-colors truncate ${isSent ? 'text-gray-400' : 'text-gray-900'}`}>{guest.Name}</h4>
+                    {isEditing ? (
+                      <div className="flex items-center space-x-2 mt-1">
+                        <input
+                          autoFocus
+                          type="tel"
+                          value={editPhoneValue}
+                          onChange={(e) => setEditPhoneValue(e.target.value)}
+                          placeholder="Enter Phone"
+                          className="text-[10px] font-bold bg-gray-100 border-none rounded-lg px-2 py-1 w-full"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUpdatePhone(guest);
+                            if (e.key === 'Escape') setEditingGuestId(null);
+                          }}
+                        />
+                        <button 
+                          disabled={isUpdating}
+                          onClick={() => handleUpdatePhone(guest)}
+                          className="bg-blue-600 text-white p-1 rounded-lg"
+                        >
+                          {isUpdating ? <Clock size={12} className="animate-spin" /> : <Save size={12} />}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-2">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">
+                          {guest.Family_POC} • {guest.Phone || 'NO PHONE'}
+                        </p>
+                        <button 
+                          onClick={() => {
+                            setEditingGuestId(guest.Guest_ID);
+                            setEditPhoneValue(guest.Phone || '');
+                          }}
+                          className="text-blue-500 p-1 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          {guest.Phone ? <Pencil size={12} /> : <Plus size={12} />}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <CopyToClipboard text={personalizeMessage(customText, guest)} onCopy={() => handleCopy(guest)}>
-                    <button className="p-3 rounded-2xl bg-gray-100 text-gray-500 hover:bg-gray-200 active:scale-95 transition-all">
-                      <Copy size={18} />
-                    </button>
-                  </CopyToClipboard>
-                  <button
-                    onClick={() => handleSend(guest)}
-                    className={`${isSent ? 'bg-gray-200 text-gray-500' : 'bg-green-500 text-white shadow-lg shadow-green-100'} p-3 rounded-2xl active:scale-90 transition-all flex items-center space-x-2`}
-                  >
-                    <MessageCircle size={18} />
-                    <span className="text-[10px] font-black uppercase hidden sm:inline">{isSent ? 'Sent' : 'Send'}</span>
-                  </button>
+                <div className="flex items-center space-x-2 ml-4">
+                  {guest.Phone && (
+                    <>
+                      <CopyToClipboard text={personalizeMessage(customText, guest)} onCopy={() => handleCopy(guest)}>
+                        <button className="p-3 rounded-2xl bg-gray-100 text-gray-500 hover:bg-gray-200 active:scale-95 transition-all">
+                          <Copy size={18} />
+                        </button>
+                      </CopyToClipboard>
+                      <button
+                        onClick={() => handleSend(guest)}
+                        className={`${isSent ? 'bg-gray-200 text-gray-500' : 'bg-green-500 text-white shadow-lg shadow-green-100'} p-3 rounded-2xl active:scale-90 transition-all flex items-center space-x-2`}
+                      >
+                        <MessageCircle size={18} />
+                        <span className="text-[10px] font-black uppercase hidden sm:inline">{isSent ? 'Sent' : 'Send'}</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             );
